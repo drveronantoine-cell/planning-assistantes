@@ -81,6 +81,20 @@ def set_data():
     return jsonify({"ok": True})
 
 
+@app.route("/api/debug")
+def debug():
+    def preview(s):
+        if not s:
+            return "(vide)"
+        if len(s) <= 8:
+            return f"'{s}' (longueur {len(s)})"
+        return f"'{s[:4]}...{s[-4:]}' (longueur {len(s)})"
+    return jsonify({
+        "JSONBIN_ID": preview(JSONBIN_ID),
+        "JSONBIN_KEY": preview(JSONBIN_KEY),
+    })
+
+
 @app.route("/")
 def index():
     return "Serveur relais OK. Ce service ne sert que l'API /api/data."
