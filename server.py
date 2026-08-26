@@ -48,11 +48,18 @@ def get_data():
         return jsonify({"error": "Serveur non configuré (JSONBIN_ID / JSONBIN_KEY manquants)"}), 500
     req = urllib.request.Request(
         JSONBIN_BASE + "/latest",
-        headers={"X-Master-Key": JSONBIN_KEY, "X-Bin-Meta": "false"},
+        headers={
+            "X-Master-Key": JSONBIN_KEY,
+            "X-Bin-Meta": "false",
+            "User-Agent": "Mozilla/5.0 (compatible; SuiviHeuresCabinet/1.0)",
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as res:
             data = json.loads(res.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        return jsonify({"error": f"HTTP {e.code} depuis jsonbin.io", "detail": detail}), 502
     except urllib.error.URLError as e:
         return jsonify({"error": str(e)}), 502
     return jsonify(data)
@@ -71,11 +78,18 @@ def set_data():
         JSONBIN_BASE,
         data=body,
         method="PUT",
-        headers={"Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY},
+        headers={
+            "Content-Type": "application/json",
+            "X-Master-Key": JSONBIN_KEY,
+            "User-Agent": "Mozilla/5.0 (compatible; SuiviHeuresCabinet/1.0)",
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as res:
             res.read()
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        return jsonify({"error": f"HTTP {e.code} depuis jsonbin.io", "detail": detail}), 502
     except urllib.error.URLError as e:
         return jsonify({"error": str(e)}), 502
     return jsonify({"ok": True})
