@@ -70,10 +70,7 @@ def set_data():
     if not JSONBIN_ID or not JSONBIN_KEY:
         return jsonify({"error": "Serveur non configuré (JSONBIN_ID / JSONBIN_KEY manquants)"}), 500
     payload = request.get_json(force=True, silent=True) or {}
-    body = json.dumps({
-        "employees": payload.get("employees", []),
-        "entries": payload.get("entries", []),
-    }).encode("utf-8")
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         JSONBIN_BASE,
         data=body,
