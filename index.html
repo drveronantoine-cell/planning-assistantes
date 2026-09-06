@@ -400,6 +400,7 @@
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
           <button class="btn ghost small" id="planToday">Semaine actuelle</button>
           <button class="btn ghost small edit-only" id="planApplyDefaults">↻ Appliquer les horaires habituels</button>
+          <button class="btn ghost small edit-only" id="planCopyToDefaults">📥 Copier cette semaine → horaires habituels</button>
         </div>
       </div>
       <div class="form-row edit-only" style="margin-top:12px; align-items:center;">
@@ -1680,6 +1681,13 @@
               <span>→</span>
               <input type="time" id="pschedEnd${i}_0" value="${slot0.end}" ${checked ? '' : 'disabled'}>
             </div>
+            <div class="task-row">
+              <input type="text" id="pschedTask${i}_0" value="${escapeHtml(slot0.task || '')}" placeholder="Tâche (optionnel)" ${checked ? '' : 'disabled'} style="max-width:150px;">
+              <span class="task-row-label">horaire de la tâche :</span>
+              <input type="time" id="pschedTaskStart${i}_0" value="${slot0.taskStart || slot0.start}" ${checked ? '' : 'disabled'}>
+              <span>→</span>
+              <input type="time" id="pschedTaskEnd${i}_0" value="${slot0.taskEnd || slot0.end}" ${checked ? '' : 'disabled'}>
+            </div>
             <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-muted);">
               <input type="checkbox" id="pschedHasSlot2_${i}" ${hasSlot2 ? 'checked' : ''} ${checked ? '' : 'disabled'}>
               pause déjeuner / 2e créneau
@@ -1688,6 +1696,13 @@
               <input type="time" id="pschedStart${i}_1" value="${slot1.start}" ${checked ? '' : 'disabled'}>
               <span>→</span>
               <input type="time" id="pschedEnd${i}_1" value="${slot1.end}" ${checked ? '' : 'disabled'}>
+            </div>
+            <div class="task-row" id="pschedTaskWrap${i}_1" style="${hasSlot2 ? '' : 'display:none;'}">
+              <input type="text" id="pschedTask${i}_1" value="${escapeHtml(slot1.task || '')}" placeholder="Tâche (optionnel)" ${checked ? '' : 'disabled'} style="max-width:150px;">
+              <span class="task-row-label">horaire de la tâche :</span>
+              <input type="time" id="pschedTaskStart${i}_1" value="${slot1.taskStart || slot1.start}" ${checked ? '' : 'disabled'}>
+              <span>→</span>
+              <input type="time" id="pschedTaskEnd${i}_1" value="${slot1.taskEnd || slot1.end}" ${checked ? '' : 'disabled'}>
             </div>
           </div>
         </div>`;
@@ -1698,12 +1713,19 @@
         const on = e.target.checked;
         $('pschedStart'+i+'_0').disabled = !on;
         $('pschedEnd'+i+'_0').disabled = !on;
+        $('pschedTask'+i+'_0').disabled = !on;
+        $('pschedTaskStart'+i+'_0').disabled = !on;
+        $('pschedTaskEnd'+i+'_0').disabled = !on;
         $('pschedHasSlot2_'+i).disabled = !on;
         $('pschedStart'+i+'_1').disabled = !on;
         $('pschedEnd'+i+'_1').disabled = !on;
+        $('pschedTask'+i+'_1').disabled = !on;
+        $('pschedTaskStart'+i+'_1').disabled = !on;
+        $('pschedTaskEnd'+i+'_1').disabled = !on;
       });
       $('pschedHasSlot2_'+i).addEventListener('change', (e) => {
         $('pschedSlot2Wrap'+i).style.display = e.target.checked ? '' : 'none';
+        $('pschedTaskWrap'+i+'_1').style.display = e.target.checked ? '' : 'none';
       });
     }
   }
@@ -1722,7 +1744,13 @@
         alert(`Horaire invalide pour ${DAY_NAMES[i]} (matin) : l'heure de fin doit être après l'heure de début.`);
         return;
       }
-      const slots = [{ start: start0, end: end0 }];
+      const taskText0 = $('pschedTask'+i+'_0').value.trim();
+      const slots = [{
+        start: start0, end: end0,
+        task: taskText0 || null,
+        taskStart: taskText0 ? $('pschedTaskStart'+i+'_0').value : null,
+        taskEnd: taskText0 ? $('pschedTaskEnd'+i+'_0').value : null
+      }];
       if($('pschedHasSlot2_'+i).checked){
         const start1 = $('pschedStart'+i+'_1').value;
         const end1 = $('pschedEnd'+i+'_1').value;
@@ -1730,7 +1758,13 @@
           alert(`Horaire invalide pour ${DAY_NAMES[i]} (après-midi) : l'heure de fin doit être après l'heure de début.`);
           return;
         }
-        slots.push({ start: start1, end: end1 });
+        const taskText1 = $('pschedTask'+i+'_1').value.trim();
+        slots.push({
+          start: start1, end: end1,
+          task: taskText1 || null,
+          taskStart: taskText1 ? $('pschedTaskStart'+i+'_1').value : null,
+          taskEnd: taskText1 ? $('pschedTaskEnd'+i+'_1').value : null
+        });
       }
       schedule.push({ slots });
     }
@@ -1812,6 +1846,34 @@
     await saveEntries();
     renderAll();
     alert(`${added} créneau(x) ajouté(s) pour cette semaine.`);
+  }
+
+  async function copyWeekToDefaults(){
+    if(!editUnlocked) return;
+    if(!employees.length){ alert('Ajoutez d\'abord une assistante dans l\'onglet Équipe.'); return; }
+    const weekDates = Array.from({length:7}, (_,i) => addDays(planWeekStart, i));
+    const weekLabel = `${weekDates[0].toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})} au ${weekDates[6].toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})}`;
+    if(!confirm(`Copier les créneaux de la semaine du ${weekLabel} vers les horaires habituels de chaque assistante ?\n\nCeci remplacera l'horaire habituel existant pour les jours de la semaine concernés (ex : tous les lundis prendront l'horaire du lundi ${weekDates[0].toLocaleDateString('fr-FR')}).`)) return;
+    let updated = 0;
+    employees.forEach(emp => {
+      if(!Array.isArray(emp.defaultSchedule)) emp.defaultSchedule = [];
+      weekDates.forEach(d => {
+        const iso = isoOf(d);
+        const dayIdx = (d.getDay() + 6) % 7;
+        const explicit = planningFor(emp.id, iso);
+        if(!explicit) return;
+        const slots = normalizePlanSlots(explicit).map(s => ({ ...s }));
+        emp.defaultSchedule[dayIdx] = { slots };
+        updated++;
+      });
+    });
+    if(updated === 0){
+      alert("Aucun créneau saisi manuellement n'a été trouvé sur cette semaine précise. Navigue jusqu'à la bonne semaine avec « ← Semaine préc. » avant de cliquer sur ce bouton.");
+      return;
+    }
+    await saveEmployees();
+    renderAll();
+    alert(`${updated} jour(s) copié(s) vers les horaires habituels — praticien et tâche inclus.`);
   }
 
   function renderHistorique(){
@@ -3115,6 +3177,7 @@
     $('planDelete').addEventListener('click', deletePlanCell);
     $('planEditorClose').addEventListener('click', () => { $('planEditor').style.display = 'none'; });
     $('planApplyDefaults').addEventListener('click', applyDefaultsToWeek);
+    $('planCopyToDefaults').addEventListener('click', copyWeekToDefaults);
     $('planViewToggle').addEventListener('click', (e) => {
       const btn = e.target.closest('button');
       if(!btn) return;
