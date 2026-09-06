@@ -400,7 +400,6 @@
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
           <button class="btn ghost small" id="planToday">Semaine actuelle</button>
           <button class="btn ghost small edit-only" id="planApplyDefaults">↻ Appliquer les horaires habituels</button>
-          <button class="btn ghost small edit-only" id="planCopyToDefaults">📥 Copier cette semaine → horaires habituels</button>
         </div>
       </div>
       <div class="form-row edit-only" style="margin-top:12px; align-items:center;">
@@ -1848,34 +1847,6 @@
     alert(`${added} créneau(x) ajouté(s) pour cette semaine.`);
   }
 
-  async function copyWeekToDefaults(){
-    if(!editUnlocked) return;
-    if(!employees.length){ alert('Ajoutez d\'abord une assistante dans l\'onglet Équipe.'); return; }
-    const weekDates = Array.from({length:7}, (_,i) => addDays(planWeekStart, i));
-    const weekLabel = `${weekDates[0].toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})} au ${weekDates[6].toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})}`;
-    if(!confirm(`Copier les créneaux de la semaine du ${weekLabel} vers les horaires habituels de chaque assistante ?\n\nCeci remplacera l'horaire habituel existant pour les jours de la semaine concernés (ex : tous les lundis prendront l'horaire du lundi ${weekDates[0].toLocaleDateString('fr-FR')}).`)) return;
-    let updated = 0;
-    employees.forEach(emp => {
-      if(!Array.isArray(emp.defaultSchedule)) emp.defaultSchedule = [];
-      weekDates.forEach(d => {
-        const iso = isoOf(d);
-        const dayIdx = (d.getDay() + 6) % 7;
-        const explicit = planningFor(emp.id, iso);
-        if(!explicit) return;
-        const slots = normalizePlanSlots(explicit).map(s => ({ ...s }));
-        emp.defaultSchedule[dayIdx] = { slots };
-        updated++;
-      });
-    });
-    if(updated === 0){
-      alert("Aucun créneau saisi manuellement n'a été trouvé sur cette semaine précise. Navigue jusqu'à la bonne semaine avec « ← Semaine préc. » avant de cliquer sur ce bouton.");
-      return;
-    }
-    await saveEmployees();
-    renderAll();
-    alert(`${updated} jour(s) copié(s) vers les horaires habituels — praticien et tâche inclus.`);
-  }
-
   function renderHistorique(){
     const filter = $('histFilter').value || 'all';
     const list = entries.filter(e => e.type !== 'planning' && (filter === 'all' || e.employeeId === filter))
@@ -3177,7 +3148,6 @@
     $('planDelete').addEventListener('click', deletePlanCell);
     $('planEditorClose').addEventListener('click', () => { $('planEditor').style.display = 'none'; });
     $('planApplyDefaults').addEventListener('click', applyDefaultsToWeek);
-    $('planCopyToDefaults').addEventListener('click', copyWeekToDefaults);
     $('planViewToggle').addEventListener('click', (e) => {
       const btn = e.target.closest('button');
       if(!btn) return;
