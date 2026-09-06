@@ -685,6 +685,18 @@
 
   <!-- HISTORIQUE -->
   <section class="view" id="view-historique">
+    <div class="card stack edit-only" style="margin-bottom:14px;">
+      <h2 style="font-size:17px;">Export pour le comptable</h2>
+      <p class="hint" style="margin-top:0;">Génère un fichier CSV (ouvrable dans Excel) avec le détail et le résumé du mois choisi pour chaque assistante — heures sup/moins validées, congés payés, corrections.</p>
+      <div class="form-row" style="align-items:center;">
+        <div class="field" style="max-width:200px;">
+          <label>Mois</label>
+          <input type="month" id="exportMonth">
+        </div>
+        <button class="btn primary" id="exportCsvBtn">⬇ Télécharger l'export (CSV)</button>
+      </div>
+    </div>
+
     <div class="card">
       <div class="section-title">
         <h2 style="font-size:17px;">Historique complet</h2>
@@ -1845,6 +1857,66 @@
     await saveEntries();
     renderAll();
     alert(`${added} créneau(x) ajouté(s) pour cette semaine.`);
+  }
+
+  function csvEscape(v){
+    const s = String(v ?? '');
+    return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  function generateAccountingExport(){
+    const monthValue = $('exportMonth').value; // format "YYYY-MM"
+    if(!monthValue){ alert('Choisis un mois.'); return; }
+    const [year, month] = monthValue.split('-');
+    const monthLabel = new Date(`${monthValue}-01T00:00:00`).toLocaleDateString('fr-FR', {month:'long', year:'numeric'});
+    const inMonth = (dateStr) => dateStr && dateStr.startsWith(`${year}-${month}`);
+
+    const labels = { ajustement: 'Crédit/débit heures', cp_pris: 'CP posé', cp_acquis: 'CP acquis', cp_correction: 'Correction CP' };
+    const rows = [];
+    rows.push(['Assistante','Date','Type','Détail','Valeur'].map(csvEscape).join(';'));
+
+    employees.forEach(emp => {
+      const empEntries = entries
+        .filter(e => e.employeeId === emp.id && ['ajustement','cp_pris','cp_acquis','cp_correction'].includes(e.type))
+        .filter(e => e.status !== 'pending')
+        .filter(e => inMonth(e.date))
+        .sort((a,b) => a.date.localeCompare(b.date));
+
+      empEntries.forEach(e => {
+        let detail = e.label || '';
+        let valeur;
+        if(e.type === 'ajustement') valeur = `${e.hours >= 0 ? '+' : ''}${e.hours} h`;
+        else valeur = `${e.days >= 0 ? '+' : ''}${e.days} j`;
+        rows.push([emp.name, fmtDate(e.date), labels[e.type], detail, valeur].map(csvEscape).join(';'));
+      });
+    });
+
+    rows.push('');
+    rows.push(['— Résumé du mois —'].map(csvEscape).join(';'));
+    rows.push(['Assistante','Heures contrat/sem','Crédits validés (h)','Débits validés (h)','Solde heures (mois)','CP posés (j)','CP acquis (j)','Solde CP actuel (j)'].map(csvEscape).join(';'));
+
+    employees.forEach(emp => {
+      const monthAjustements = entries.filter(e => e.employeeId === emp.id && e.type === 'ajustement' && e.status !== 'pending' && inMonth(e.date));
+      const credits = monthAjustements.filter(e => e.hours >= 0).reduce((s,e) => s + e.hours, 0);
+      const debits = monthAjustements.filter(e => e.hours < 0).reduce((s,e) => s + e.hours, 0);
+      const cpPrisMois = entries.filter(e => e.employeeId === emp.id && e.type === 'cp_pris' && e.status !== 'pending' && inMonth(e.date)).reduce((s,e) => s + e.days, 0);
+      const cpAcquisMois = entries.filter(e => e.employeeId === emp.id && e.type === 'cp_acquis' && inMonth(e.date)).reduce((s,e) => s + e.days, 0);
+      rows.push([
+        emp.name, emp.weeklyHours, credits.toFixed(2), debits.toFixed(2), (credits + debits).toFixed(2),
+        cpPrisMois.toFixed(1), cpAcquisMois.toFixed(1), cpBalance(emp.id).toFixed(1)
+      ].map(csvEscape).join(';'));
+    });
+
+    const csvContent = '\uFEFF' + rows.join('\r\n'); // BOM pour les accents dans Excel
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `export-comptable-${monthValue}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   function renderHistorique(){
@@ -3085,6 +3157,7 @@
     $('savDateEnvoi').value = todayISO();
     $('absDateDebut').value = todayISO();
     $('absDateFin').value = todayISO();
+    $('exportMonth').value = todayISO().slice(0, 7);
 
     updateLockUI();
     await loadAll();
@@ -3104,6 +3177,7 @@
     $('corSubmit').addEventListener('click', addCorrection);
     $('acqEmployee').addEventListener('change', renderConges);
     $('histFilter').addEventListener('change', renderHistorique);
+    $('exportCsvBtn').addEventListener('click', generateAccountingExport);
     $('ajType').addEventListener('click', (e) => {
       const btn = e.target.closest('button');
       if(!btn) return;
