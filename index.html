@@ -1964,10 +1964,14 @@
         <div class="cal-days">${dayColsHtml}</div>
       </div>`;
 
-    $('planCalendar').querySelectorAll('.cal-block[data-emp]').forEach(block => {
+    $('planCalendar').querySelectorAll('.cal-block').forEach(block => {
       block.addEventListener('click', (e) => {
         e.stopPropagation();
-        openPlanEditor(block.dataset.emp, block.dataset.date);
+        if(block.dataset.emp && editUnlocked){
+          openPlanEditor(block.dataset.emp, block.dataset.date);
+        }else{
+          alert(block.title);
+        }
       });
     });
     $('planCalendar').querySelectorAll('.cal-day').forEach(day => {
