@@ -130,6 +130,7 @@
   }
   .segmented button.active[data-value="credit"]{background:var(--primary-tint); color:var(--primary-dark);}
   .segmented button.active[data-value="debit"]{background:var(--danger-tint); color:var(--danger);}
+  .segmented button.active[data-view]{background:var(--primary-dark); color:white;}
   .segmented button + button{border-left:1px solid var(--border);}
 
   .section-title{display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;}
@@ -203,6 +204,22 @@
     border-radius:4px; padding:2px 4px; text-align:center; line-height:1.3;
   }
   .cal-day:hover{background:var(--primary-tint);}
+
+  /* Vue liste du planning */
+  .plan-list-day-title{
+    font-family:'Fraunces', serif; font-size:16px; font-weight:600; color:var(--primary-dark);
+    padding-bottom:6px; border-bottom:2px solid var(--surface-2); margin-bottom:8px;
+  }
+  .plan-list-row{
+    display:flex; align-items:center; gap:12px; padding:10px 4px; border-bottom:1px solid var(--surface-2);
+    cursor:pointer; border-radius:8px;
+  }
+  .plan-list-row:hover{background:var(--surface-2);}
+  .plan-list-dot{width:12px; height:12px; border-radius:50%; flex:none;}
+  .plan-list-name{font-weight:700; font-size:14px; min-width:150px;}
+  .plan-list-time{font-family:'IBM Plex Mono', monospace; font-size:13px; color:var(--text-muted); min-width:150px;}
+  .plan-list-extra{font-size:12px; color:var(--text-muted); flex:1;}
+  .plan-list-flag{font-size:12px; font-weight:600; padding:2px 8px; border-radius:99px; background:var(--accent-tint); color:#8A5E1F;}
 
   .cal-block{
     position:absolute; border-radius:7px; padding:4px 6px; overflow:hidden; cursor:pointer;
@@ -391,11 +408,18 @@
         </div>
         <div class="hint" style="margin-top:0; flex:2; min-width:220px;">Cliquez sur une plage vide de la colonne pour créer un créneau pour l'assistante sélectionnée. Cliquez sur un créneau existant pour le modifier ou le supprimer.</div>
       </div>
+      <div class="segmented" id="planViewToggle" style="margin-top:10px;">
+        <button type="button" class="active" data-view="agenda">Vue agenda</button>
+        <button type="button" data-view="liste">Vue liste</button>
+      </div>
       <div class="cal-legend" id="planLegend"></div>
     </div>
 
-    <div class="card" style="overflow-x:auto;">
+    <div class="card" id="planCalendarCard" style="overflow-x:auto;">
       <div class="cal-wrap" id="planCalendar"></div>
+    </div>
+    <div class="card" id="planListCard" style="display:none;">
+      <div id="planList" class="stack" style="gap:18px;"></div>
     </div>
 
     <div class="card stack" id="planEditor" style="margin-top:14px; display:none;">
@@ -1004,6 +1028,7 @@
   let entries = [];
   let ajType = 'credit';
   let planWeekStart = mondayOf(new Date());
+  let planViewMode = 'agenda';
   let planSelectedCell = null; // { employeeId, date }
 
   let practitioners = [];
@@ -1986,6 +2011,65 @@
         const startMin = minutes;
         const endMin = Math.min(CAL_END_HOUR*60, startMin + 240);
         openPlanEditor(empId, day.dataset.date, minutesToTime(startMin), minutesToTime(endMin));
+      });
+    });
+
+    renderPlanningList(weekDates);
+  }
+
+  function renderPlanningList(weekDates){
+    if(!$('planList')) return;
+    if(!employees.length && !practitioners.length){
+      $('planList').innerHTML = `<div class="empty">Ajoutez d'abord une assistante ou un praticien.</div>`;
+      return;
+    }
+    $('planList').innerHTML = weekDates.map(d => {
+      const iso = isoOf(d);
+      const dayLabel = `${DAY_NAMES[(d.getDay()+6)%7]} ${d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})}`;
+      const occupants = dayOccupants(iso).filter(o => o.slots.length || o.absent);
+      occupants.sort((a,b) => {
+        const at = a.slots[0] ? a.slots[0].start : '99:99';
+        const bt = b.slots[0] ? b.slots[0].start : '99:99';
+        return at.localeCompare(bt);
+      });
+      if(!occupants.length){
+        return `<div><div class="plan-list-day-title">${dayLabel}</div><div class="empty">Personne de programmé.</div></div>`;
+      }
+      const rowsHtml = occupants.map(o => {
+        const c = o.kind === 'praticien' ? practColor(o.colorIdx) : empColor(o.colorIdx);
+        const kindPrefix = o.kind === 'praticien' ? '🩺 ' : '';
+        const timeLabel = o.slots.length ? formatSlotsLabel(o.slots) : '—';
+        const extras = [];
+        o.slots.forEach(slot => {
+          if(slot.practId){
+            const p = practitioners.find(x => x.id === slot.practId);
+            if(p) extras.push(`🩺 avec ${escapeHtml(p.name)}`);
+          }
+          if(slot.task){
+            extras.push(`📋 ${escapeHtml(slot.task)}${slot.taskStart ? ` (${slot.taskStart}–${slot.taskEnd})` : ''}`);
+          }
+        });
+        const flag = o.absent ? `<span class="plan-list-flag">${o.absentIcon} ${escapeHtml(o.absentLabel)}</span>` : '';
+        const clickAttrs = o.kind === 'assistante' ? `data-emp="${o.id}" data-date="${iso}"` : `data-readonly="1"`;
+        const title = `${kindPrefix}${escapeHtml(o.name)} · ${timeLabel}${extras.length ? ' · ' + extras.join(' · ') : ''}${o.absent ? ' — ' + o.absentLabel : ''}`;
+        return `<div class="plan-list-row" ${clickAttrs} title="${title}">
+          <span class="plan-list-dot" style="background:${c.dot};"></span>
+          <span class="plan-list-name">${kindPrefix}${escapeHtml(o.name)}</span>
+          <span class="plan-list-time">${timeLabel}</span>
+          <span class="plan-list-extra">${extras.join(' · ')}</span>
+          ${flag}
+        </div>`;
+      }).join('');
+      return `<div><div class="plan-list-day-title">${dayLabel}</div>${rowsHtml}</div>`;
+    }).join('');
+
+    $('planList').querySelectorAll('.plan-list-row').forEach(row => {
+      row.addEventListener('click', () => {
+        if(row.dataset.emp && editUnlocked){
+          openPlanEditor(row.dataset.emp, row.dataset.date);
+        }else{
+          alert(row.title);
+        }
       });
     });
   }
@@ -2992,6 +3076,14 @@
     $('planDelete').addEventListener('click', deletePlanCell);
     $('planEditorClose').addEventListener('click', () => { $('planEditor').style.display = 'none'; });
     $('planApplyDefaults').addEventListener('click', applyDefaultsToWeek);
+    $('planViewToggle').addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if(!btn) return;
+      planViewMode = btn.dataset.view;
+      $('planViewToggle').querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+      $('planCalendarCard').style.display = planViewMode === 'agenda' ? '' : 'none';
+      $('planListCard').style.display = planViewMode === 'liste' ? '' : 'none';
+    });
 
     $('schedEmployee').addEventListener('change', renderScheduleEditor);
     $('schedSave').addEventListener('click', saveDefaultSchedule);
