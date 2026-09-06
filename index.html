@@ -223,6 +223,8 @@
   .sched-times{display:flex; align-items:center; gap:8px;}
   .sched-times input[type=time]{width:110px;}
   .sched-times span{color:var(--text-muted); font-size:12px;}
+  .task-row{display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:6px 8px; background:var(--accent-tint); border-radius:8px;}
+  .task-row-label{font-size:11px; color:#8A5E1F; font-weight:600; white-space:nowrap;}
 
   /* Section switcher (Assistantes / Praticiens) + modules */
   .sections{display:flex; gap:8px; margin-bottom:20px;}
@@ -410,9 +412,19 @@
           <label>Binôme praticien</label>
           <select id="planPract0"></select>
         </div>
+      </div>
+      <div class="task-row">
         <div class="field">
           <label>Tâche (optionnel)</label>
           <input type="text" id="planTask0" placeholder="ex : stérilisation, accueil...">
+        </div>
+        <div class="field">
+          <label>Tâche — début</label>
+          <input type="time" id="planTaskStart0" value="09:00">
+        </div>
+        <div class="field">
+          <label>Tâche — fin</label>
+          <input type="time" id="planTaskEnd0" value="12:30">
         </div>
       </div>
       <label style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--text-muted);">
@@ -431,9 +443,19 @@
           <label>Binôme praticien</label>
           <select id="planPract1"></select>
         </div>
+      </div>
+      <div class="task-row" id="planTaskWrap1" style="display:none;">
         <div class="field">
           <label>Tâche (optionnel)</label>
           <input type="text" id="planTask1" placeholder="ex : stérilisation, accueil...">
+        </div>
+        <div class="field">
+          <label>Tâche — début</label>
+          <input type="time" id="planTaskStart1" value="14:00">
+        </div>
+        <div class="field">
+          <label>Tâche — fin</label>
+          <input type="time" id="planTaskEnd1" value="18:00">
         </div>
       </div>
       <div class="field" style="flex:none;">
@@ -1459,7 +1481,13 @@
               <span>→</span>
               <input type="time" id="schedEnd${i}_0" value="${slot0.end}" ${checked ? '' : 'disabled'}>
               <select id="schedPract${i}_0" ${checked ? '' : 'disabled'} style="max-width:150px;">${practOptions(slot0.practId)}</select>
+            </div>
+            <div class="task-row">
               <input type="text" id="schedTask${i}_0" value="${escapeHtml(slot0.task || '')}" placeholder="Tâche (optionnel)" ${checked ? '' : 'disabled'} style="max-width:150px;">
+              <span class="task-row-label">horaire de la tâche :</span>
+              <input type="time" id="schedTaskStart${i}_0" value="${slot0.taskStart || slot0.start}" ${checked ? '' : 'disabled'}>
+              <span>→</span>
+              <input type="time" id="schedTaskEnd${i}_0" value="${slot0.taskEnd || slot0.end}" ${checked ? '' : 'disabled'}>
             </div>
             <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-muted);">
               <input type="checkbox" id="schedHasSlot2_${i}" ${hasSlot2 ? 'checked' : ''} ${checked ? '' : 'disabled'}>
@@ -1470,7 +1498,13 @@
               <span>→</span>
               <input type="time" id="schedEnd${i}_1" value="${slot1.end}" ${checked ? '' : 'disabled'}>
               <select id="schedPract${i}_1" ${checked ? '' : 'disabled'} style="max-width:150px;">${practOptions(slot1.practId)}</select>
+            </div>
+            <div class="task-row" style="${hasSlot2 ? '' : 'display:none;'}" id="schedTaskWrap${i}_1">
               <input type="text" id="schedTask${i}_1" value="${escapeHtml(slot1.task || '')}" placeholder="Tâche (optionnel)" ${checked ? '' : 'disabled'} style="max-width:150px;">
+              <span class="task-row-label">horaire de la tâche :</span>
+              <input type="time" id="schedTaskStart${i}_1" value="${slot1.taskStart || slot1.start}" ${checked ? '' : 'disabled'}>
+              <span>→</span>
+              <input type="time" id="schedTaskEnd${i}_1" value="${slot1.taskEnd || slot1.end}" ${checked ? '' : 'disabled'}>
             </div>
           </div>
         </div>`;
@@ -1483,15 +1517,20 @@
         $('schedEnd'+i+'_0').disabled = !on;
         $('schedPract'+i+'_0').disabled = !on;
         $('schedTask'+i+'_0').disabled = !on;
+        $('schedTaskStart'+i+'_0').disabled = !on;
+        $('schedTaskEnd'+i+'_0').disabled = !on;
         $('schedHasSlot2_'+i).disabled = !on;
         $('schedStart'+i+'_1').disabled = !on;
         $('schedEnd'+i+'_1').disabled = !on;
         $('schedPract'+i+'_1').disabled = !on;
         $('schedTask'+i+'_1').disabled = !on;
+        $('schedTaskStart'+i+'_1').disabled = !on;
+        $('schedTaskEnd'+i+'_1').disabled = !on;
         updateSchedTotal();
       });
       $('schedHasSlot2_'+i).addEventListener('change', (e) => {
         $('schedSlot2Wrap'+i).style.display = e.target.checked ? '' : 'none';
+        $('schedTaskWrap'+i+'_1').style.display = e.target.checked ? '' : 'none';
         updateSchedTotal();
       });
       $('schedStart'+i+'_0').addEventListener('input', updateSchedTotal);
@@ -1533,7 +1572,13 @@
         alert(`Horaire invalide pour ${DAY_NAMES[i]} (matin) : l'heure de fin doit être après l'heure de début.`);
         return;
       }
-      const slots = [{ start: start0, end: end0, practId: $('schedPract'+i+'_0').value || null, task: $('schedTask'+i+'_0').value.trim() || null }];
+      const taskText0 = $('schedTask'+i+'_0').value.trim();
+      const slots = [{
+        start: start0, end: end0, practId: $('schedPract'+i+'_0').value || null,
+        task: taskText0 || null,
+        taskStart: taskText0 ? $('schedTaskStart'+i+'_0').value : null,
+        taskEnd: taskText0 ? $('schedTaskEnd'+i+'_0').value : null
+      }];
       if($('schedHasSlot2_'+i).checked){
         const start1 = $('schedStart'+i+'_1').value;
         const end1 = $('schedEnd'+i+'_1').value;
@@ -1541,7 +1586,13 @@
           alert(`Horaire invalide pour ${DAY_NAMES[i]} (après-midi) : l'heure de fin doit être après l'heure de début.`);
           return;
         }
-        slots.push({ start: start1, end: end1, practId: $('schedPract'+i+'_1').value || null, task: $('schedTask'+i+'_1').value.trim() || null });
+        const taskText1 = $('schedTask'+i+'_1').value.trim();
+        slots.push({
+          start: start1, end: end1, practId: $('schedPract'+i+'_1').value || null,
+          task: taskText1 || null,
+          taskStart: taskText1 ? $('schedTaskStart'+i+'_1').value : null,
+          taskEnd: taskText1 ? $('schedTaskEnd'+i+'_1').value : null
+        });
       }
       schedule.push({ slots });
     }
@@ -1883,11 +1934,11 @@
           const clickAttrs = x.kind === 'assistante' ? `data-emp="${x.id}" data-date="${iso}"` : `data-readonly="1"`;
           return `<div class="cal-block" ${clickAttrs}
               style="top:${top}px; height:${height}px; left:calc(${leftPct}% + 2px); width:calc(${widthPct}% - 4px); ${absentStyle} ${stripeStyle}"
-              title="${kindPrefix}${escapeHtml(x.name)} · ${slotsLabel}${withPract ? ' · avec ' + escapeHtml(withPract.name) : ''}${slot.task ? ' · ' + escapeHtml(slot.task) : ''}${x.absent ? ' — ' + x.absentLabel : ''}">
+              title="${kindPrefix}${escapeHtml(x.name)} · ${slotsLabel}${withPract ? ' · avec ' + escapeHtml(withPract.name) : ''}${slot.task ? ' · ' + escapeHtml(slot.task) + (slot.taskStart ? ` (${slot.taskStart}–${slot.taskEnd})` : '') : ''}${x.absent ? ' — ' + x.absentLabel : ''}">
             <div class="who">${kindPrefix}${escapeHtml(x.name)}${x.absent ? ' ' + x.absentIcon : ''}</div>
             <div class="when">${slot.start}–${slot.end}</div>
             ${withPract ? `<div class="reel-tag" style="color:${withPractColor.dot};">🩺 ${escapeHtml(withPract.name)}</div>` : ''}
-            ${slot.task ? `<div class="reel-tag" style="color:${c.fg}; font-style:italic;">📋 ${escapeHtml(slot.task)}</div>` : ''}
+            ${slot.task ? `<div class="reel-tag" style="color:${c.fg}; font-style:italic;">📋 ${escapeHtml(slot.task)}${slot.taskStart && (slot.taskStart !== slot.start || slot.taskEnd !== slot.end) ? ` (${slot.taskStart}–${slot.taskEnd})` : ''}</div>` : ''}
             ${reelHtml}
           </div>`;
         }).join('');
@@ -1948,6 +1999,7 @@
     const hasSlot2 = !!(slots && slots[1]);
     $('planHasSlot2').checked = hasSlot2;
     $('planSlot2Wrap').style.display = hasSlot2 ? '' : 'none';
+    $('planTaskWrap1').style.display = hasSlot2 ? '' : 'none';
     $('planStart1').value = hasSlot2 ? slots[1].start : '14:00';
     $('planEnd1').value = hasSlot2 ? slots[1].end : '18:00';
 
@@ -1956,7 +2008,11 @@
     $('planPract0').innerHTML = practOpts(slots && slots[0] ? slots[0].practId : null);
     $('planPract1').innerHTML = practOpts(hasSlot2 ? slots[1].practId : null);
     $('planTask0').value = (slots && slots[0] && slots[0].task) || '';
+    $('planTaskStart0').value = (slots && slots[0] && slots[0].taskStart) || $('planStart0').value;
+    $('planTaskEnd0').value = (slots && slots[0] && slots[0].taskEnd) || $('planEnd0').value;
     $('planTask1').value = (hasSlot2 && slots[1].task) || '';
+    $('planTaskStart1').value = (hasSlot2 && slots[1].taskStart) || $('planStart1').value;
+    $('planTaskEnd1').value = (hasSlot2 && slots[1].taskEnd) || $('planEnd1').value;
 
     $('planDelete').style.display = existing ? 'inline-flex' : 'none';
     if($('planEmployee').value !== employeeId) $('planEmployee').value = employeeId;
@@ -2011,11 +2067,23 @@
     if(!planSelectedCell) return;
     const d0 = computeDuration($('planStart0').value, $('planEnd0').value);
     if(d0 === null){ alert("Le créneau du matin est invalide : l'heure de fin doit être après l'heure de début."); return; }
-    const slots = [{ start: $('planStart0').value, end: $('planEnd0').value, practId: $('planPract0').value || null, task: $('planTask0').value.trim() || null }];
+    const task0 = $('planTask0').value.trim();
+    const slots = [{
+      start: $('planStart0').value, end: $('planEnd0').value, practId: $('planPract0').value || null,
+      task: task0 || null,
+      taskStart: task0 ? $('planTaskStart0').value : null,
+      taskEnd: task0 ? $('planTaskEnd0').value : null
+    }];
     if($('planHasSlot2').checked){
       const d1 = computeDuration($('planStart1').value, $('planEnd1').value);
       if(d1 === null){ alert("Le créneau de l'après-midi est invalide : l'heure de fin doit être après l'heure de début."); return; }
-      slots.push({ start: $('planStart1').value, end: $('planEnd1').value, practId: $('planPract1').value || null, task: $('planTask1').value.trim() || null });
+      const task1 = $('planTask1').value.trim();
+      slots.push({
+        start: $('planStart1').value, end: $('planEnd1').value, practId: $('planPract1').value || null,
+        task: task1 || null,
+        taskStart: task1 ? $('planTaskStart1').value : null,
+        taskEnd: task1 ? $('planTaskEnd1').value : null
+      });
     }
     entries = entries.filter(e => !(e.employeeId === planSelectedCell.employeeId && e.type === 'planning' && e.date === planSelectedCell.date));
     entries.push({
@@ -2904,6 +2972,7 @@
     $('planEnd1').addEventListener('input', updatePlanDuration);
     $('planHasSlot2').addEventListener('change', (e) => {
       $('planSlot2Wrap').style.display = e.target.checked ? '' : 'none';
+      $('planTaskWrap1').style.display = e.target.checked ? '' : 'none';
       updatePlanDuration();
     });
     $('planSave').addEventListener('click', savePlanCell);
