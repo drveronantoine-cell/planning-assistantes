@@ -131,6 +131,7 @@
   .segmented button.active[data-value="credit"]{background:var(--primary-tint); color:var(--primary-dark);}
   .segmented button.active[data-value="debit"]{background:var(--danger-tint); color:var(--danger);}
   .segmented button.active[data-view]{background:var(--primary-dark); color:white;}
+  .segmented button.active[data-period]{background:var(--primary-dark); color:white;}
   .segmented button + button{border-left:1px solid var(--border);}
 
   .section-title{display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;}
@@ -408,9 +409,16 @@
         </div>
         <div class="hint" style="margin-top:0; flex:2; min-width:220px;">Cliquez sur une plage vide de la colonne pour créer un créneau pour l'assistante sélectionnée. Cliquez sur un créneau existant pour le modifier ou le supprimer.</div>
       </div>
-      <div class="segmented" id="planViewToggle" style="margin-top:10px;">
-        <button type="button" class="active" data-view="agenda">Vue agenda</button>
-        <button type="button" data-view="liste">Vue liste</button>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+        <div class="segmented" id="planViewToggle">
+          <button type="button" class="active" data-view="agenda">Vue agenda</button>
+          <button type="button" data-view="liste">Vue liste</button>
+        </div>
+        <div class="segmented" id="planPeriodToggle">
+          <button type="button" data-period="day">Jour</button>
+          <button type="button" class="active" data-period="week5">Semaine (5j)</button>
+          <button type="button" data-period="week7">Semaine (7j)</button>
+        </div>
       </div>
       <div class="cal-legend" id="planLegend"></div>
     </div>
@@ -1029,6 +1037,8 @@
   let ajType = 'credit';
   let planWeekStart = mondayOf(new Date());
   let planViewMode = 'agenda';
+  let planPeriod = 'week5'; // 'day' | 'week5' | 'week7'
+  let planDayCursor = new Date();
   let planSelectedCell = null; // { employeeId, date }
 
   let practitioners = [];
@@ -1883,10 +1893,18 @@
   }
 
   function renderPlanning(){
-    const weekDates = Array.from({length:5}, (_,i) => addDays(planWeekStart, i));
-    const weekEnd = weekDates[4];
-    $('planWeekLabel').textContent =
-      `${weekDates[0].toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})} — ${weekEnd.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'})}`;
+    let weekDates;
+    if(planPeriod === 'day'){
+      weekDates = [planDayCursor];
+    }else if(planPeriod === 'week7'){
+      weekDates = Array.from({length:7}, (_,i) => addDays(planWeekStart, i));
+    }else{
+      weekDates = Array.from({length:5}, (_,i) => addDays(planWeekStart, i));
+    }
+    const weekEnd = weekDates[weekDates.length - 1];
+    $('planWeekLabel').textContent = planPeriod === 'day'
+      ? weekDates[0].toLocaleDateString('fr-FR',{weekday:'long', day:'2-digit', month:'short', year:'numeric'})
+      : `${weekDates[0].toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})} — ${weekEnd.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'})}`;
 
     if(!employees.length && !practitioners.length){
       $('planCalendar').innerHTML = `<div class="empty">Ajoutez d'abord une assistante ou un praticien.</div>`;
@@ -3060,9 +3078,30 @@
       $('ajType').querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
     });
 
-    $('planPrev').addEventListener('click', () => { planWeekStart = addDays(planWeekStart, -7); renderPlanning(); });
-    $('planNext').addEventListener('click', () => { planWeekStart = addDays(planWeekStart, 7); renderPlanning(); });
-    $('planToday').addEventListener('click', () => { planWeekStart = mondayOf(new Date()); renderPlanning(); });
+    $('planPrev').addEventListener('click', () => {
+      if(planPeriod === 'day'){ planDayCursor = addDays(planDayCursor, -1); }
+      else{ planWeekStart = addDays(planWeekStart, -7); }
+      renderPlanning();
+    });
+    $('planNext').addEventListener('click', () => {
+      if(planPeriod === 'day'){ planDayCursor = addDays(planDayCursor, 1); }
+      else{ planWeekStart = addDays(planWeekStart, 7); }
+      renderPlanning();
+    });
+    $('planToday').addEventListener('click', () => {
+      planWeekStart = mondayOf(new Date());
+      planDayCursor = new Date();
+      renderPlanning();
+    });
+    $('planPeriodToggle').addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if(!btn) return;
+      planPeriod = btn.dataset.period;
+      $('planPeriodToggle').querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+      $('planPrev').textContent = planPeriod === 'day' ? '← Jour préc.' : '← Semaine préc.';
+      $('planNext').textContent = planPeriod === 'day' ? 'Jour suiv. →' : 'Semaine suiv. →';
+      renderPlanning();
+    });
     $('planStart0').addEventListener('input', updatePlanDuration);
     $('planEnd0').addEventListener('input', updatePlanDuration);
     $('planStart1').addEventListener('input', updatePlanDuration);
