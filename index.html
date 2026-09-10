@@ -738,10 +738,11 @@
       <div class="section-title" style="margin-bottom:0;">
         <h2 style="font-size:17px;">Nouveau cas</h2>
       </div>
+      <p class="hint" style="margin-top:0; color:var(--danger);">⚠ Par confidentialité, n'indique jamais le nom du patient ici — utilise uniquement le numéro de dossier (voir LOGOSw pour la correspondance).</p>
       <div class="form-row">
         <div class="field">
-          <label>Patient</label>
-          <input type="text" id="casePatient" placeholder="Nom du patient">
+          <label>Numéro de dossier</label>
+          <input type="text" id="casePatient" placeholder="ex : Dossier #47 (pas de nom, par confidentialité)">
         </div>
         <div class="field">
           <label>Type de cas</label>
@@ -1271,11 +1272,26 @@
     return fromPointage + fromAjustements;
   }
   function cpBalance(empId){
+    // Solde projeté : tient compte de tous les CP validés, y compris ceux posés
+    // pour une date future qui n'a pas encore eu lieu.
     const acquis = entries.filter(e => e.employeeId === empId && e.type === 'cp_acquis')
       .reduce((s,e) => s + e.days, 0);
     const pris = entries.filter(e => e.employeeId === empId && e.type === 'cp_pris' && e.status !== 'pending')
       .reduce((s,e) => s + e.days, 0);
     const corrections = entries.filter(e => e.employeeId === empId && e.type === 'cp_correction')
+      .reduce((s,e) => s + e.days, 0);
+    return acquis - pris + corrections;
+  }
+
+  function cpBalanceToday(empId){
+    // Solde à ce jour : ne déduit que les CP déjà pris (date passée ou aujourd'hui),
+    // ignore les CP posés pour une date future qui n'a pas encore eu lieu.
+    const today = todayISO();
+    const acquis = entries.filter(e => e.employeeId === empId && e.type === 'cp_acquis' && e.date <= today)
+      .reduce((s,e) => s + e.days, 0);
+    const pris = entries.filter(e => e.employeeId === empId && e.type === 'cp_pris' && e.status !== 'pending' && e.date <= today)
+      .reduce((s,e) => s + e.days, 0);
+    const corrections = entries.filter(e => e.employeeId === empId && e.type === 'cp_correction' && e.date <= today)
       .reduce((s,e) => s + e.days, 0);
     return acquis - pris + corrections;
   }
@@ -1382,7 +1398,8 @@
     }
     grid.innerHTML = employees.map(emp => {
       const hb = heuresBalance(emp.id);
-      const cb = cpBalance(emp.id);
+      const cbToday = cpBalanceToday(emp.id);
+      const cbProjected = cpBalance(emp.id);
       const scheduled = weeklyScheduledHours(emp);
       const gap = Math.abs(scheduled - emp.weeklyHours) > 0.1;
       const clip = Math.max(-20, Math.min(20, hb));
@@ -1391,9 +1408,10 @@
       const fillWidth = Math.abs(pct);
       const fillColor = hb > 0.05 ? 'var(--primary)' : (hb < -0.05 ? 'var(--danger)' : 'var(--border)');
       const dotsMax = 12;
-      const filledDots = Math.max(0, Math.round(cb));
+      const filledDots = Math.max(0, Math.round(cbToday));
       const dots = Array.from({length: dotsMax}, (_,i) =>
         `<span class="cp-dot ${i < filledDots ? 'filled' : ''}"></span>`).join('');
+      const hasFuture = Math.abs(cbProjected - cbToday) > 0.05;
       return `
         <div class="card emp-card">
           <div class="emp-head">
@@ -1412,9 +1430,10 @@
             </div>
           </div>
           <div class="balance-row">
-            <span class="balance-label">Congés payés restants</span>
-            <div class="balance-value mono" style="color:var(--text);">${cb.toFixed(1)} j</div>
+            <span class="balance-label">Congés payés — solde à ce jour</span>
+            <div class="balance-value mono" style="color:var(--text);">${cbToday.toFixed(1)} j</div>
             <div class="cp-dots">${dots}</div>
+            ${hasFuture ? `<div class="hint" style="margin-top:2px;">Après les CP déjà posés à venir : <strong>${cbProjected.toFixed(1)} j</strong></div>` : ''}
           </div>
         </div>`;
     }).join('');
@@ -1478,7 +1497,7 @@
 
   function renderConges(){
     const emp = employees.find(e => e.id === $('acqEmployee').value);
-    $('acqHint').textContent = emp ? `Solde CP actuel : ${cpBalance(emp.id).toFixed(1)} j.` : '';
+    $('acqHint').textContent = emp ? `Solde à ce jour : ${cpBalanceToday(emp.id).toFixed(1)} j · Après CP à venir : ${cpBalance(emp.id).toFixed(1)} j.` : '';
 
     if(editUnlocked){
       $('cpCardTitle').textContent = 'Poser des congés payés';
@@ -1953,7 +1972,7 @@
 
     rows.push('');
     rows.push(['— Résumé du mois —'].map(csvEscape).join(';'));
-    rows.push(['Assistante','Heures contrat/sem','Crédits validés (h)','Débits validés (h)','Solde heures (mois)','CP posés (j)','CP acquis (j)','Solde CP actuel (j)'].map(csvEscape).join(';'));
+    rows.push(['Assistante','Heures contrat/sem','Crédits validés (h)','Débits validés (h)','Solde heures (mois)','CP posés (j)','CP acquis (j)','Solde CP à ce jour (j)','Solde CP après CP à venir (j)'].map(csvEscape).join(';'));
 
     employees.forEach(emp => {
       const monthAjustements = entries.filter(e => e.employeeId === emp.id && e.type === 'ajustement' && e.status !== 'pending' && inMonth(e.date));
@@ -1963,7 +1982,7 @@
       const cpAcquisMois = entries.filter(e => e.employeeId === emp.id && e.type === 'cp_acquis' && inMonth(e.date)).reduce((s,e) => s + e.days, 0);
       rows.push([
         emp.name, emp.weeklyHours, credits.toFixed(2), debits.toFixed(2), (credits + debits).toFixed(2),
-        cpPrisMois.toFixed(1), cpAcquisMois.toFixed(1), cpBalance(emp.id).toFixed(1)
+        cpPrisMois.toFixed(1), cpAcquisMois.toFixed(1), cpBalanceToday(emp.id).toFixed(1), cpBalance(emp.id).toFixed(1)
       ].map(csvEscape).join(';'));
     });
 
@@ -2542,7 +2561,7 @@
     const caseTypeId = $('caseType').value;
     const noteText = $('caseNote').value.trim();
     const practitionerIds = [...document.querySelectorAll('.case-pract-cb:checked')].map(cb => cb.value);
-    if(!patientName){ alert('Merci de renseigner le nom du patient.'); return; }
+    if(!patientName){ alert('Merci de renseigner le numéro de dossier.'); return; }
     if(!caseTypeId){ alert('Merci de sélectionner un type de cas.'); return; }
     const notes = noteText ? [{ id: uid(), date: todayISO(), text: noteText }] : [];
     cases.push({
