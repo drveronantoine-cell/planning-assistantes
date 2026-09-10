@@ -130,6 +130,8 @@
   }
   .segmented button.active[data-value="credit"]{background:var(--primary-tint); color:var(--primary-dark);}
   .segmented button.active[data-value="debit"]{background:var(--danger-tint); color:var(--danger);}
+  .segmented button.active[data-value="probleme"]{background:var(--danger-tint); color:var(--danger);}
+  .segmented button.active[data-value="suggestion"]{background:var(--accent-tint); color:#8A5E1F;}
   .segmented button.active[data-view]{background:var(--primary-dark); color:white;}
   .segmented button.active[data-period]{background:var(--primary-dark); color:white;}
   .segmented button + button{border-left:1px solid var(--border);}
@@ -344,6 +346,17 @@
   .course-note{font-size:12px; color:var(--text-muted);}
   .course-item.bought .course-name{text-decoration:line-through; color:var(--text-muted); font-weight:500;}
   .course-date{font-size:11px; color:var(--text-muted); font-family:'IBM Plex Mono', monospace; margin-left:auto;}
+
+  .prob-card{display:flex; flex-direction:column; gap:8px;}
+  .prob-head{display:flex; justify-content:space-between; align-items:flex-start; gap:10px;}
+  .prob-title{font-family:'Fraunces', serif; font-weight:600; font-size:15px;}
+  .prob-meta{font-size:11px; color:var(--text-muted);}
+  .prob-type-tag{font-size:11px; font-weight:600; padding:3px 9px; border-radius:99px; display:inline-block;}
+  .prob-type-tag.probleme{background:var(--danger-tint); color:var(--danger);}
+  .prob-type-tag.suggestion{background:var(--accent-tint); color:#8A5E1F;}
+  .prob-status-tag{font-size:11px; font-weight:600; padding:3px 9px; border-radius:99px; background:var(--surface-2); color:var(--text-muted);}
+  .prob-status-tag.en_cours{background:var(--primary-tint); color:var(--primary-dark);}
+  .prob-solution{background:var(--primary-tint); border-radius:8px; padding:8px 10px; font-size:13px; color:var(--primary-dark);}
 </style>
 </head>
 <body>
@@ -366,6 +379,7 @@
     <button class="section-btn active" data-section="assistantes">Assistantes</button>
     <button class="section-btn" data-section="praticiens">Praticiens</button>
     <button class="section-btn" data-section="materiel">Matériel</button>
+    <button class="section-btn" data-section="problemes">Problèmes / Suggestions</button>
   </div>
 
   <div class="module active" id="module-assistantes">
@@ -1024,6 +1038,49 @@
   </div>
   <!-- /module-materiel -->
 
+  <div class="module" id="module-problemes">
+    <div class="card stack" style="margin-bottom:14px;">
+      <h2 style="font-size:17px;">Signaler un problème ou une suggestion</h2>
+      <p class="hint" style="margin-top:0;">Ouvert à tous — assistantes comme praticiens. Le cabinet suit et répond ci-dessous.</p>
+      <div class="form-row" style="align-items:center;">
+        <div class="field" style="flex:none;">
+          <label>Type</label>
+          <div class="segmented" id="probType">
+            <button type="button" class="active" data-value="probleme">⚠ Problème</button>
+            <button type="button" data-value="suggestion">💡 Suggestion</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Ton nom</label>
+          <input type="text" id="probAuthor" placeholder="ex : Camille">
+        </div>
+      </div>
+      <div class="field">
+        <label>Titre</label>
+        <input type="text" id="probTitle" placeholder="ex : Stérilisateur salle 2 fait du bruit">
+      </div>
+      <div class="field">
+        <label>Détail</label>
+        <input type="text" id="probDesc" placeholder="Décris le problème ou l'idée...">
+      </div>
+      <div>
+        <button class="btn primary" id="probSubmit">Envoyer</button>
+      </div>
+    </div>
+
+    <div class="section-title">
+      <h2>En cours</h2>
+      <span class="badge-cabinet" id="probOpenCount">0</span>
+    </div>
+    <div id="probOpenList" class="stack" style="gap:10px;"></div>
+
+    <div class="card stack" style="margin-top:14px;">
+      <h2 style="font-size:17px;">Résolus</h2>
+      <div id="probDoneList"></div>
+    </div>
+  </div>
+  <!-- /module-problemes -->
+
 </div>
 
 <script>
@@ -1064,6 +1121,8 @@
   let commandes = []; // { id, category: 'materiel'|'consommable', name, quantity, note, status, createdDate }
   let courses = []; // { id, name, note, bought, dateAchat, createdDate }
   let absences = []; // { id, practitionerId, dateDebut, dateFin, motif, createdDate }
+  let problemes = []; // { id, type: 'probleme'|'suggestion', author, title, desc, date, status, solution, resolvedDate }
+  let probType = 'probleme';
 
   function mondayOf(d){
     const date = new Date(d);
@@ -1102,7 +1161,7 @@
   async function loadAll(){
     if(!configured()){
       employees = []; entries = []; practitioners = []; caseTypes = []; cases = [];
-      savRequests = []; commandes = []; courses = []; absences = [];
+      savRequests = []; commandes = []; courses = []; absences = []; problemes = [];
       storageOffline = true;
       updateStorageBadge();
       return;
@@ -1120,11 +1179,12 @@
       commandes = data.commandes || [];
       courses = data.courses || [];
       absences = data.absences || [];
+      problemes = data.problemes || [];
       storageOffline = false;
     }catch(err){
       console.error('Impossible de charger les données depuis le serveur :', err);
       employees = []; entries = []; practitioners = []; caseTypes = []; cases = [];
-      savRequests = []; commandes = []; courses = []; absences = [];
+      savRequests = []; commandes = []; courses = []; absences = []; problemes = [];
       storageOffline = true;
     }
     updateStorageBadge();
@@ -1136,7 +1196,7 @@
       const res = await fetch(API_BASE, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employees, entries, practitioners, caseTypes, cases, savRequests, commandes, courses, absences })
+        body: JSON.stringify({ employees, entries, practitioners, caseTypes, cases, savRequests, commandes, courses, absences, problemes })
       });
       if(!res.ok) throw new Error('HTTP ' + res.status);
       storageOffline = false;
@@ -2973,6 +3033,121 @@
 
   // ==================== FIN MATERIEL ====================
 
+  // ==================== PROBLEMES / SUGGESTIONS ====================
+
+  const PROB_TYPE_LABEL = { probleme: '⚠ Problème', suggestion: '💡 Suggestion' };
+  const PROB_STATUS_LABEL = { nouveau: 'Nouveau', en_cours: 'En cours', resolu: 'Résolu' };
+
+  function renderProblemesCard(p, opts){
+    const showActions = opts && opts.showActions;
+    const statusTag = `<span class="prob-status-tag ${p.status}">${PROB_STATUS_LABEL[p.status]}</span>`;
+    let actionsHtml = '';
+    if(showActions){
+      actionsHtml = `
+        <div class="form-row edit-only" style="align-items:center;">
+          ${p.status !== 'en_cours' ? `<button class="btn small ghost" data-prob-status="${p.id}:en_cours">Marquer en cours</button>` : ''}
+          <button class="btn small ghost" data-prob-resolve="${p.id}">✓ Marquer résolu</button>
+          <button class="btn small danger-ghost" data-prob-delete="${p.id}">Suppr.</button>
+        </div>
+        <div class="form-row edit-only" id="probSolutionWrap${p.id}" style="display:none;">
+          <div class="field">
+            <input type="text" id="probSolutionInput${p.id}" placeholder="Comment ça a été réglé ?">
+          </div>
+          <button class="btn primary small" data-prob-confirm-resolve="${p.id}">Confirmer</button>
+        </div>`;
+    }
+    return `
+      <div class="card prob-card" data-prob="${p.id}">
+        <div class="prob-head">
+          <div>
+            <span class="prob-type-tag ${p.type}">${PROB_TYPE_LABEL[p.type]}</span>
+            ${statusTag}
+            <div class="prob-title" style="margin-top:6px;">${escapeHtml(p.title)}</div>
+          </div>
+        </div>
+        ${p.desc ? `<div style="font-size:13px;">${escapeHtml(p.desc)}</div>` : ''}
+        <div class="prob-meta">${escapeHtml(p.author || 'Anonyme')} · ${fmtDate(p.date)}</div>
+        ${p.solution ? `<div class="prob-solution">✓ ${escapeHtml(p.solution)}${p.resolvedDate ? ' · ' + fmtDate(p.resolvedDate) : ''}</div>` : ''}
+        ${actionsHtml}
+      </div>`;
+  }
+
+  function renderProblemes(){
+    if(!$('probOpenList')) return;
+    const open = problemes.filter(p => p.status !== 'resolu').sort((a,b) => b.date.localeCompare(a.date));
+    $('probOpenCount').textContent = open.length;
+    $('probOpenList').innerHTML = open.length
+      ? open.map(p => renderProblemesCard(p, { showActions: true })).join('')
+      : `<div class="empty">Rien en cours pour l'instant.</div>`;
+
+    const done = problemes.filter(p => p.status === 'resolu').sort((a,b) => (b.resolvedDate||'').localeCompare(a.resolvedDate||''));
+    $('probDoneList').innerHTML = done.length
+      ? done.map(p => renderProblemesCard(p, { showActions: false })).join('')
+      : `<div class="empty">Rien de résolu pour l'instant.</div>`;
+
+    document.querySelectorAll('[data-prob-status]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const [id, status] = btn.dataset.probStatus.split(':');
+        setProblemeStatus(id, status);
+      });
+    });
+    document.querySelectorAll('[data-prob-resolve]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const wrap = $('probSolutionWrap' + btn.dataset.probResolve);
+        wrap.style.display = wrap.style.display === 'none' ? 'flex' : 'none';
+      });
+    });
+    document.querySelectorAll('[data-prob-confirm-resolve]').forEach(btn => {
+      btn.addEventListener('click', () => resolveProbleme(btn.dataset.probConfirmResolve));
+    });
+    document.querySelectorAll('[data-prob-delete]').forEach(btn => {
+      btn.addEventListener('click', () => deleteProbleme(btn.dataset.probDelete));
+    });
+  }
+
+  async function addProbleme(){
+    const type = probType;
+    const author = $('probAuthor').value.trim();
+    const title = $('probTitle').value.trim();
+    const desc = $('probDesc').value.trim();
+    if(!title){ alert('Merci de renseigner un titre.'); return; }
+    problemes.push({ id: uid(), type, author, title, desc, date: todayISO(), status: 'nouveau', solution: null, resolvedDate: null });
+    await persist();
+    $('probTitle').value = ''; $('probDesc').value = '';
+    renderProblemes();
+  }
+
+  async function setProblemeStatus(id, status){
+    if(!editUnlocked) return;
+    const p = problemes.find(x => x.id === id);
+    if(!p) return;
+    p.status = status;
+    await persist();
+    renderProblemes();
+  }
+
+  async function resolveProbleme(id){
+    if(!editUnlocked) return;
+    const p = problemes.find(x => x.id === id);
+    if(!p) return;
+    const solution = $('probSolutionInput' + id).value.trim();
+    p.status = 'resolu';
+    p.solution = solution || 'Résolu';
+    p.resolvedDate = todayISO();
+    await persist();
+    renderProblemes();
+  }
+
+  async function deleteProbleme(id){
+    if(!editUnlocked) return;
+    if(!confirm('Supprimer définitivement cette entrée ?')) return;
+    problemes = problemes.filter(x => x.id !== id);
+    await persist();
+    renderProblemes();
+  }
+
+  // ==================== FIN PROBLEMES / SUGGESTIONS ====================
+
   function renderAll(){
     fillEmployeeSelects();
     renderDashboard();
@@ -2983,6 +3158,7 @@
     renderHistorique();
     renderPraticiens();
     renderMateriel();
+    renderProblemes();
   }
 
   // ---------- Actions ----------
@@ -3146,6 +3322,7 @@
     $('module-assistantes').classList.toggle('active', name === 'assistantes');
     $('module-praticiens').classList.toggle('active', name === 'praticiens');
     $('module-materiel').classList.toggle('active', name === 'materiel');
+    $('module-problemes').classList.toggle('active', name === 'problemes');
   }
 
   // ---------- Init ----------
@@ -3178,6 +3355,14 @@
     $('acqEmployee').addEventListener('change', renderConges);
     $('histFilter').addEventListener('change', renderHistorique);
     $('exportCsvBtn').addEventListener('click', generateAccountingExport);
+
+    $('probType').addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if(!btn) return;
+      probType = btn.dataset.value;
+      $('probType').querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+    });
+    $('probSubmit').addEventListener('click', addProbleme);
     $('ajType').addEventListener('click', (e) => {
       const btn = e.target.closest('button');
       if(!btn) return;
