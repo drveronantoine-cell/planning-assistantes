@@ -357,10 +357,21 @@
   .prob-status-tag{font-size:11px; font-weight:600; padding:3px 9px; border-radius:99px; background:var(--surface-2); color:var(--text-muted);}
   .prob-status-tag.en_cours{background:var(--primary-tint); color:var(--primary-dark);}
   .prob-solution{background:var(--primary-tint); border-radius:8px; padding:8px 10px; font-size:13px; color:var(--primary-dark);}
+
+  .toast{
+    position:fixed; left:50%; bottom:24px; transform:translate(-50%, 20px);
+    background:var(--primary-dark); color:white; padding:14px 22px; border-radius:99px;
+    font-family:'Inter'; font-size:14px; font-weight:600; box-shadow:0 8px 24px -8px rgba(0,0,0,0.3);
+    z-index:999; opacity:0; pointer-events:none; transition:opacity .25s ease, transform .25s ease;
+    display:flex; align-items:center; gap:8px; max-width:90vw; text-align:center;
+  }
+  .toast.show{opacity:1; transform:translate(-50%, 0); pointer-events:auto;}
+  .toast.error{background:var(--danger);}
 </style>
 </head>
 <body>
 <div class="app">
+  <div id="toast" class="toast"></div>
 
   <div class="top">
     <div>
@@ -1192,7 +1203,7 @@
   }
 
   async function persist(){
-    if(!configured()){ storageOffline = true; updateStorageBadge(); return; }
+    if(!configured()){ storageOffline = true; updateStorageBadge(); return false; }
     try{
       const res = await fetch(API_BASE, {
         method: 'POST',
@@ -1204,14 +1215,26 @@
     }catch(err){
       console.error('Erreur de sauvegarde sur le serveur :', err);
       storageOffline = true;
+      showToast("Échec de l'enregistrement — vérifiez la connexion et réessayez dans une minute.", true);
     }
     updateStorageBadge();
+    return !storageOffline;
   }
 
   // Les deux anciens noms restent utilisés dans le reste du code ;
   // ils pointent maintenant vers la même sauvegarde partagée.
-  async function saveEmployees(){ await persist(); }
-  async function saveEntries(){ await persist(); }
+  async function saveEmployees(){ return await persist(); }
+  async function saveEntries(){ return await persist(); }
+
+  function showToast(message, isError){
+    const el = $('toast');
+    if(!el) return;
+    el.textContent = (isError ? '⚠ ' : '✓ ') + message;
+    el.classList.toggle('error', !!isError);
+    el.classList.add('show');
+    clearTimeout(el._hideTimer);
+    el._hideTimer = setTimeout(() => el.classList.remove('show'), 3200);
+  }
 
   function updateStorageBadge(){
     const el = $('serverStatus');
@@ -1874,9 +1897,10 @@
     if(!dateDebut){ alert('Merci de renseigner une date de début.'); return; }
     if(dateFin < dateDebut){ alert('La date de fin doit être après la date de début.'); return; }
     absences.push({ id: uid(), practitionerId, dateDebut, dateFin, motif, createdDate: todayISO() });
-    await persist();
+    const ok = await persist();
     $('absDateDebut').value = ''; $('absDateFin').value = ''; $('absMotif').value = '';
     renderAll();
+    if(ok) showToast('Absence enregistrée.');
   }
 
   async function deleteAbsence(id){
@@ -2160,7 +2184,7 @@
               reelHtml = `<div class="reel-tag" style="color:var(--danger);">⚠ Réel ${reel.toFixed(2)}h</div>`;
             }
           }
-          const absentStyle = x.absent ? `background:var(--accent-tint); color:#8A5E1F; border:1px dashed var(--accent);` : `background:${c.bg}; color:${c.fg};`;
+          const absentStyle = x.absent ? `background:var(--accent-tint); color:#8A5E1F;` : `background:${c.bg}; color:${c.fg};`;
           const withPract = x.kind === 'assistante' && slot.practId ? practitioners.find(p => p.id === slot.practId) : null;
           const withPractColor = withPract ? practColor(practitioners.indexOf(withPract)) : null;
           const stripeStyle = withPractColor ? `border-left:5px solid ${withPractColor.dot};` : '';
@@ -2173,7 +2197,7 @@
               style="top:${top}px; height:${height}px; left:calc(${leftPct}% + 2px); width:calc(${widthPct}% - 4px); ${absentStyle} ${stripeStyle}"
               title="${kindPrefix}${escapeHtml(x.name)} · ${slotsLabel}${withPract ? ' · avec ' + escapeHtml(withPract.name) : ''}${slot.task ? ' · ' + escapeHtml(slot.task) + (slot.taskStart ? ` (${slot.taskStart}–${slot.taskEnd})` : '') : ''}${x.absent ? ' — ' + x.absentLabel : ''}">
             <div class="who">${kindPrefix}${escapeHtml(x.name)}${x.absent ? ' ' + x.absentIcon : ''}</div>
-            <div class="when">${slot.start}–${slot.end}</div>
+            <div class="when" style="${x.absent ? 'text-decoration:line-through; text-decoration-thickness:2px;' : ''}">${slot.start}–${slot.end}</div>
             ${extraLine}
             ${reelHtml}
           </div>`;
@@ -2908,9 +2932,10 @@
       id: uid(), equip, desc, dateEnvoi, dateRetourEstime,
       dateRetourReel: null, status: 'en_cours', createdDate: todayISO()
     });
-    await persist();
+    const ok = await persist();
     $('savEquip').value = ''; $('savDesc').value = ''; $('savDateRetour').value = '';
     renderMateriel();
+    if(ok) showToast('Demande SAV enregistrée.');
   }
 
   async function validateSAVReturn(id){
@@ -2966,9 +2991,10 @@
     const note = $('orderNote').value.trim();
     if(!name){ alert("Merci de renseigner le nom de l'article."); return; }
     commandes.push({ id: uid(), category, name, quantity, note, status: 'a_commander', createdDate: todayISO() });
-    await persist();
+    const ok = await persist();
     $('orderName').value = ''; $('orderQty').value = '1'; $('orderNote').value = '';
     renderMateriel();
+    if(ok) showToast('Article ajouté à la liste.');
   }
 
   async function advanceOrder(id){
@@ -3030,9 +3056,10 @@
     const note = $('courseNote').value.trim();
     if(!name){ alert("Merci de renseigner l'article."); return; }
     courses.push({ id: uid(), name, note, bought: false, dateAchat: null, createdDate: todayISO() });
-    await persist();
+    const ok = await persist();
     $('courseName').value = ''; $('courseNote').value = '';
     renderMateriel();
+    if(ok) showToast('Article ajouté à la liste de courses.');
   }
 
   async function toggleCourseBought(id){
@@ -3131,9 +3158,10 @@
     const desc = $('probDesc').value.trim();
     if(!title){ alert('Merci de renseigner un titre.'); return; }
     problemes.push({ id: uid(), type, author, title, desc, date: todayISO(), status: 'nouveau', solution: null, resolvedDate: null });
-    await persist();
+    const ok = await persist();
     $('probTitle').value = ''; $('probDesc').value = '';
     renderProblemes();
+    if(ok) showToast('Votre signalement a bien été envoyé.');
   }
 
   async function setProblemeStatus(id, status){
@@ -3251,10 +3279,11 @@
     if(ajType === 'debit') hours = -hours;
     const status = editUnlocked ? 'approved' : 'pending';
     entries.push({ id: uid(), employeeId, date, type: 'ajustement', hours, label, status });
-    await saveEntries();
+    const ok = await saveEntries();
     $('ajHours').value = '';
     $('ajLabel').value = '';
     renderAll();
+    if(ok) showToast(status === 'pending' ? 'Votre saisie a bien été enregistrée, en attente de validation.' : 'Ajustement enregistré.');
   }
 
   async function addCPPris(){
@@ -3265,9 +3294,10 @@
     if(isNaN(days) || days <= 0){ alert('Merci de renseigner un nombre de jours valide.'); return; }
     const status = editUnlocked ? 'approved' : 'pending';
     entries.push({ id: uid(), employeeId, date, type: 'cp_pris', days, status });
-    await saveEntries();
+    const ok = await saveEntries();
     $('cpDays').value = '1';
     renderAll();
+    if(ok) showToast(status === 'pending' ? 'Votre demande de CP a bien été enregistrée, en attente de validation.' : 'CP enregistrés.');
   }
 
   async function addAcquisition(){
