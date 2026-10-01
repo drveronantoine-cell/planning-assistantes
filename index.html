@@ -595,14 +595,15 @@
             <select id="cpEmployee" class="emp-select"></select>
           </div>
           <div class="field">
-            <label>Date de début</label>
+            <label>Date de début du CP</label>
             <input type="date" id="cpDate">
           </div>
           <div class="field">
-            <label>Nombre de jours</label>
-            <input type="number" id="cpDays" step="0.5" min="0.5" value="1">
+            <label>Date de reprise</label>
+            <input type="date" id="cpReturnDate">
           </div>
         </div>
+        <p class="hint" id="cpComputedDays" style="margin-top:0;"></p>
         <div>
           <button class="btn primary" id="cpSubmit">Enregistrer la prise de CP</button>
         </div>
@@ -1163,6 +1164,69 @@
     return d.toLocaleDateString('fr-FR', {day:'2-digit', month:'short', year:'numeric'});
   }
 
+  // ---------- Jours fériés français (pour le calcul des CP) ----------
+  function easterISO(year){
+    // Algorithme de Meeus/Jones/Butcher (calcul du dimanche de Pâques)
+    const a = year % 19;
+    const b = Math.floor(year / 100);
+    const c = year % 100;
+    const d = Math.floor(b / 4);
+    const e = b % 4;
+    const f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4);
+    const k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31); // 3=mars, 4=avril
+    const day = ((h + l - 7 * m + 114) % 31) + 1;
+    return isoOf(new Date(year, month - 1, day));
+  }
+
+  function frenchHolidaysForYear(year){
+    const set = new Set();
+    set.add(`${year}-01-01`); // Jour de l'an
+    set.add(`${year}-05-01`); // Fête du travail
+    set.add(`${year}-05-08`); // Victoire 1945
+    set.add(`${year}-07-14`); // Fête nationale
+    set.add(`${year}-08-15`); // Assomption
+    set.add(`${year}-11-01`); // Toussaint
+    set.add(`${year}-11-11`); // Armistice
+    set.add(`${year}-12-25`); // Noël
+    const easter = new Date(easterISO(year) + 'T00:00:00');
+    set.add(isoOf(addDays(easter, 1)));  // Lundi de Pâques
+    set.add(isoOf(addDays(easter, 39))); // Ascension
+    set.add(isoOf(addDays(easter, 50))); // Lundi de Pentecôte
+    return set;
+  }
+
+  const _holidayCache = {};
+  function isFrenchHoliday(iso){
+    const year = parseInt(iso.slice(0, 4), 10);
+    if(!_holidayCache[year]) _holidayCache[year] = frenchHolidaysForYear(year);
+    return _holidayCache[year].has(iso);
+  }
+
+  // Décompte légal des CP en jours ouvrables : du 1er jour de congé (inclus)
+  // jusqu'à la veille de la reprise (incluse), du lundi au samedi (dimanche
+  // exclu), et en excluant les jours fériés.
+  function countJoursOuvrablesCP(startISO, returnISO){
+    if(!startISO || !returnISO) return null;
+    const start = new Date(startISO + 'T00:00:00');
+    const ret = new Date(returnISO + 'T00:00:00');
+    if(isNaN(start) || isNaN(ret) || ret <= start) return null;
+    let count = 0;
+    let cur = new Date(start);
+    while(cur < ret){
+      const dow = cur.getDay(); // 0 = dimanche
+      const iso = isoOf(cur);
+      if(dow !== 0 && !isFrenchHoliday(iso)) count++;
+      cur = addDays(cur, 1);
+    }
+    return count;
+  }
+
   // ---------- Storage ----------
   // Sauvegarde partagée via le petit serveur relais (Render) : lui seul
   // connaît la clé jsonbin.io, jamais exposée dans ce fichier ni au
@@ -1519,6 +1583,7 @@
   }
 
   function renderConges(){
+    updateCPComputedDays();
     const emp = employees.find(e => e.id === $('acqEmployee').value);
     $('acqHint').textContent = emp ? `Solde à ce jour : ${cpBalanceToday(emp.id).toFixed(1)} j · Après CP à venir : ${cpBalance(emp.id).toFixed(1)} j.` : '';
 
@@ -1563,7 +1628,7 @@
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--surface-2);">
           <div>
             <div style="font-weight:600; font-size:13px;">${em ? escapeHtml(em.name) : '—'}</div>
-            <div style="font-size:12px; color:var(--text-muted);">À partir du ${fmtDate(e.date)}</div>
+            <div style="font-size:12px; color:var(--text-muted);">${fmtDate(e.date)}${e.returnDate ? ' → reprise le ' + fmtDate(e.returnDate) : ''}</div>
           </div>
           <div style="display:flex; align-items:center; gap:8px;">
             <span class="mono" style="font-size:13px;">${e.days} j</span>
@@ -3286,16 +3351,37 @@
     if(ok) showToast(status === 'pending' ? 'Votre saisie a bien été enregistrée, en attente de validation.' : 'Ajustement enregistré.');
   }
 
+  function updateCPComputedDays(){
+    const start = $('cpDate').value;
+    const ret = $('cpReturnDate').value;
+    const hint = $('cpComputedDays');
+    if(!hint) return;
+    if(!start || !ret){
+      hint.textContent = 'Renseignez la date de début et la date de reprise pour calculer automatiquement le nombre de jours de CP (jours ouvrables, du lundi au samedi, jours fériés déduits).';
+      return null;
+    }
+    const days = countJoursOuvrablesCP(start, ret);
+    if(days === null){
+      hint.textContent = 'La date de reprise doit être après la date de début.';
+      return null;
+    }
+    hint.textContent = `Décompte automatique : ${days} jour${days > 1 ? 's' : ''} ouvrable${days > 1 ? 's' : ''} de CP (du lundi au samedi, jours fériés déduits).`;
+    return days;
+  }
+
   async function addCPPris(){
     const employeeId = $('cpEmployee').value;
     const date = $('cpDate').value || todayISO();
-    const days = parseFloat($('cpDays').value);
+    const returnDate = $('cpReturnDate').value;
     if(!employeeId){ alert('Ajoutez d\'abord une assistante dans l\'onglet Équipe.'); return; }
-    if(isNaN(days) || days <= 0){ alert('Merci de renseigner un nombre de jours valide.'); return; }
+    if(!returnDate){ alert('Merci de renseigner la date de reprise.'); return; }
+    const days = countJoursOuvrablesCP(date, returnDate);
+    if(days === null || days <= 0){ alert('La date de reprise doit être après la date de début.'); return; }
     const status = editUnlocked ? 'approved' : 'pending';
-    entries.push({ id: uid(), employeeId, date, type: 'cp_pris', days, status });
+    entries.push({ id: uid(), employeeId, date, returnDate, type: 'cp_pris', days, status });
     const ok = await saveEntries();
-    $('cpDays').value = '1';
+    $('cpReturnDate').value = '';
+    updateCPComputedDays();
     renderAll();
     if(ok) showToast(status === 'pending' ? 'Votre demande de CP a bien été enregistrée, en attente de validation.' : 'CP enregistrés.');
   }
@@ -3399,6 +3485,8 @@
     $('empCancelEdit').addEventListener('click', cancelEditEmployee);
     $('ajSubmit').addEventListener('click', addAjustement);
     $('cpSubmit').addEventListener('click', addCPPris);
+    $('cpDate').addEventListener('change', updateCPComputedDays);
+    $('cpReturnDate').addEventListener('change', updateCPComputedDays);
     $('acqSubmit').addEventListener('click', addAcquisition);
     $('corSubmit').addEventListener('click', addCorrection);
     $('acqEmployee').addEventListener('change', renderConges);
