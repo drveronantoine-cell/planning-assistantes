@@ -536,14 +536,14 @@
     <div class="two-col">
       <div class="card stack">
         <h2 style="font-size:17px;">Ajouter un crédit ou un débit d'heures</h2>
-        <p class="hint" style="margin-top:0;">Pour signaler une exception aux horaires habituels — heures supplémentaires faites, heures non effectuées, accord particulier, etc.</p>
+        <p class="hint" style="margin-top:0;">Pour signaler une exception aux horaires habituels — heures supplémentaires faites, heures non effectuées, accord particulier, etc. Pour reprendre un ancien solde, laisse la date vide et indique « ancien solde » en motif.</p>
         <div class="form-row">
           <div class="field">
             <label>Assistante</label>
             <select id="ajEmployee" class="emp-select"></select>
           </div>
           <div class="field">
-            <label>Date</label>
+            <label>Date (facultatif)</label>
             <input type="date" id="ajDate">
           </div>
           <div class="field">
@@ -3374,6 +3374,7 @@
     const ok = await saveEntries();
     $('ajHours').value = '';
     $('ajLabel').value = '';
+    $('ajDate').value = '';
     renderAll();
     if(ok) showToast(status === 'pending' ? 'Votre saisie a bien été enregistrée, en attente de validation.' : 'Ajustement enregistré.');
   }
@@ -3490,7 +3491,6 @@
   // ---------- Init ----------
   async function init(){
     $('todayLabel').textContent = new Date().toLocaleDateString('fr-FR', {weekday:'long', day:'2-digit', month:'long', year:'numeric'});
-    $('ajDate').value = todayISO();
     $('cpDate').value = todayISO();
     $('corDate').value = todayISO();
     $('savDateEnvoi').value = todayISO();
