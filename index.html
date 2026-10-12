@@ -525,7 +525,8 @@
       </div>
       <div class="form-row">
         <button class="btn primary" id="planSave">Enregistrer le créneau</button>
-        <button class="btn danger-ghost" id="planDelete" style="display:none;">Supprimer ce créneau</button>
+        <button class="btn ghost" id="planOff">Jour non travaillé</button>
+        <button class="btn danger-ghost" id="planDelete" style="display:none;">Rétablir l'horaire habituel</button>
       </div>
     </div>
   </section>
@@ -2483,6 +2484,20 @@
     renderAll();
   }
 
+  async function markPlanOff(){
+    if(!editUnlocked) return;
+    if(!planSelectedCell) return;
+    entries = entries.filter(e => !(e.employeeId === planSelectedCell.employeeId && e.type === 'planning' && e.date === planSelectedCell.date));
+    entries.push({
+      id: uid(), employeeId: planSelectedCell.employeeId, date: planSelectedCell.date,
+      type: 'planning', slots: [], hours: 0, off: true
+    });
+    const ok = await saveEntries();
+    $('planEditor').style.display = 'none';
+    renderAll();
+    if(ok) showToast('Journée marquée comme non travaillée.');
+  }
+
   async function deletePlanCell(){
     if(!editUnlocked) return;
     if(!planSelectedCell) return;
@@ -3542,6 +3557,7 @@
     });
     $('planSave').addEventListener('click', savePlanCell);
     $('planDelete').addEventListener('click', deletePlanCell);
+    $('planOff').addEventListener('click', markPlanOff);
     $('planEditorClose').addEventListener('click', () => { $('planEditor').style.display = 'none'; });
     $('planApplyDefaults').addEventListener('click', applyDefaultsToWeek);
     $('planViewToggle').addEventListener('click', (e) => {
