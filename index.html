@@ -714,7 +714,7 @@
   <section class="view" id="view-historique">
     <div class="card stack edit-only" style="margin-bottom:14px;">
       <h2 style="font-size:17px;">Export pour le comptable</h2>
-      <p class="hint" style="margin-top:0;">Génère un fichier CSV (ouvrable dans Excel) avec le détail et le résumé du mois choisi pour chaque assistante — heures sup/moins validées, congés payés, corrections.</p>
+      <p class="hint" style="margin-top:0;">Génère un fichier CSV (ouvrable dans Excel) avec, pour chaque assistante et pour le mois choisi : les dates de CP posés (lundi–vendredi), le nombre de jours travaillés et le nombre de pauses déjeuner.</p>
       <div class="form-row" style="align-items:center;">
         <div class="field" style="max-width:200px;">
           <label>Mois</label>
@@ -2033,46 +2033,58 @@
     return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
 
+  // Dates (lundi-vendredi, hors jours fériés) couvertes par une demande de CP
+  function cpDatesOf(e){
+    const start = new Date(e.date + 'T00:00:00');
+    let end;
+    if(e.returnDate) end = new Date(e.returnDate + 'T00:00:00'); // reprise exclue
+    else end = addDays(start, Math.max(1, Math.ceil(e.days || 1))); // ancien format : approximation
+    const out = [];
+    for(let d = new Date(start); d < end; d = addDays(d, 1)){
+      const dow = d.getDay();
+      const iso = isoOf(d);
+      if(dow >= 1 && dow <= 5 && !isFrenchHoliday(iso)) out.push(iso);
+    }
+    return out;
+  }
+
   function generateAccountingExport(){
     const monthValue = $('exportMonth').value; // format "YYYY-MM"
     if(!monthValue){ alert('Choisis un mois.'); return; }
     const [year, month] = monthValue.split('-');
-    const monthLabel = new Date(`${monthValue}-01T00:00:00`).toLocaleDateString('fr-FR', {month:'long', year:'numeric'});
     const inMonth = (dateStr) => dateStr && dateStr.startsWith(`${year}-${month}`);
+    const daysInMonth = new Date(parseInt(year, 10), parseInt(month, 10), 0).getDate();
+    const fmtShort = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 
-    const labels = { ajustement: 'Crédit/débit heures', cp_pris: 'CP posé', cp_acquis: 'CP acquis', cp_correction: 'Correction CP' };
     const rows = [];
-    rows.push(['Assistante','Date','Type','Détail','Valeur'].map(csvEscape).join(';'));
+    rows.push(['Assistante','CP posés (nb de jours Lun-Ven)','Dates des CP posés (Lun-Ven)','Jours travaillés','Pauses déjeuner'].map(csvEscape).join(';'));
 
     employees.forEach(emp => {
-      const empEntries = entries
-        .filter(e => e.employeeId === emp.id && ['ajustement','cp_pris','cp_acquis','cp_correction'].includes(e.type))
-        .filter(e => e.status !== 'pending')
-        .filter(e => inMonth(e.date))
-        .sort((a,b) => a.date.localeCompare(b.date));
+      // Dates de CP validés tombant dans le mois
+      const cpDates = new Set();
+      entries.filter(e => e.employeeId === emp.id && e.type === 'cp_pris' && e.status !== 'pending')
+        .forEach(e => cpDatesOf(e).forEach(iso => { if(inMonth(iso)) cpDates.add(iso); }));
+      const cpList = [...cpDates].sort();
 
-      empEntries.forEach(e => {
-        let detail = e.label || '';
-        let valeur;
-        if(e.type === 'ajustement') valeur = `${e.hours >= 0 ? '+' : ''}${e.hours} h`;
-        else valeur = `${e.days >= 0 ? '+' : ''}${e.days} j`;
-        rows.push([emp.name, fmtDate(e.date), labels[e.type], detail, valeur].map(csvEscape).join(';'));
-      });
-    });
+      // Jours travaillés et pauses déjeuner d'après le planning (horaire habituel + modifications)
+      let worked = 0, lunches = 0;
+      for(let n = 1; n <= daysInMonth; n++){
+        const iso = `${year}-${month}-${String(n).padStart(2, '0')}`;
+        if(cpDates.has(iso)) continue; // en CP : pas travaillé
+        const explicit = planningFor(emp.id, iso);
+        let slots;
+        if(explicit) slots = normalizePlanSlots(explicit);
+        else{
+          if(isFrenchHoliday(iso)) continue; // jour férié sans saisie manuelle : non travaillé
+          slots = normalizeDaySlots(defaultScheduleFor(emp.id, iso));
+        }
+        if(!slots || !slots.length) continue; // jour non travaillé
+        worked++;
+        if(slots.length >= 2) lunches++; // matin + après-midi = une pause déjeuner
+      }
 
-    rows.push('');
-    rows.push(['— Résumé du mois —'].map(csvEscape).join(';'));
-    rows.push(['Assistante','Heures contrat/sem','Crédits validés (h)','Débits validés (h)','Solde heures (mois)','CP posés (j)','CP acquis (j)','Solde CP à ce jour (j)','Solde CP après CP à venir (j)'].map(csvEscape).join(';'));
-
-    employees.forEach(emp => {
-      const monthAjustements = entries.filter(e => e.employeeId === emp.id && e.type === 'ajustement' && e.status !== 'pending' && inMonth(e.date));
-      const credits = monthAjustements.filter(e => e.hours >= 0).reduce((s,e) => s + e.hours, 0);
-      const debits = monthAjustements.filter(e => e.hours < 0).reduce((s,e) => s + e.hours, 0);
-      const cpPrisMois = entries.filter(e => e.employeeId === emp.id && e.type === 'cp_pris' && e.status !== 'pending' && inMonth(e.date)).reduce((s,e) => s + e.days, 0);
-      const cpAcquisMois = entries.filter(e => e.employeeId === emp.id && e.type === 'cp_acquis' && inMonth(e.date)).reduce((s,e) => s + e.days, 0);
       rows.push([
-        emp.name, emp.weeklyHours, credits.toFixed(2), debits.toFixed(2), (credits + debits).toFixed(2),
-        cpPrisMois.toFixed(1), cpAcquisMois.toFixed(1), cpBalanceToday(emp.id).toFixed(1), cpBalance(emp.id).toFixed(1)
+        emp.name, cpList.length, cpList.map(fmtShort).join(' '), worked, lunches
       ].map(csvEscape).join(';'));
     });
 
