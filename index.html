@@ -596,14 +596,14 @@
             <select id="cpEmployee" class="emp-select"></select>
           </div>
           <div class="field">
-            <label>Date de début du CP</label>
+            <label>Jour de CP à ajouter</label>
             <input type="date" id="cpDate">
           </div>
-          <div class="field">
-            <label>Date de reprise</label>
-            <input type="date" id="cpReturnDate">
+          <div class="field" style="flex:none; align-self:flex-end;">
+            <button type="button" class="btn ghost" id="cpAddDate">+ Ajouter ce jour</button>
           </div>
         </div>
+        <div id="cpDatesList" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
         <p class="hint" id="cpComputedDays" style="margin-top:0;"></p>
         <div>
           <button class="btn primary" id="cpSubmit">Enregistrer la prise de CP</button>
@@ -1403,6 +1403,7 @@
     // administrateur) sont prises en compte visuellement.
     return entries.some(e => {
       if(e.employeeId !== empId || e.type !== 'cp_pris' || e.status === 'pending') return false;
+      if(e.dates && e.dates.length) return e.dates.includes(dateIso);
       const start = new Date(e.date + 'T00:00:00');
       const span = Math.max(1, Math.ceil(e.days || 1));
       for(let i = 0; i < span; i++){
@@ -1429,7 +1430,7 @@
       let slots, isDefault, hours;
       if(explicit){ slots = normalizePlanSlots(explicit); isDefault = false; hours = explicit.hours; }
       else{
-        const def = normalizeDaySlots(defaultScheduleFor(emp.id, iso));
+        const def = isFrenchHoliday(iso) ? null : normalizeDaySlots(defaultScheduleFor(emp.id, iso)); // jour férié : non travaillé
         slots = def; isDefault = true; hours = def ? totalSlotsHours(def) : 0;
       }
       return {
@@ -1440,7 +1441,7 @@
     });
 
     const fromPract = practitioners.map((p, idx) => {
-      const slots = normalizeDaySlots(defaultScheduleForPract(p.id, iso));
+      const slots = isFrenchHoliday(iso) ? null : normalizeDaySlots(defaultScheduleForPract(p.id, iso));
       return {
         kind: 'praticien', id: p.id, name: p.name, colorIdx: idx,
         slots: slots || [], hours: slots ? totalSlotsHours(slots) : 0, isDefault: true,
@@ -1629,7 +1630,7 @@
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--surface-2);">
           <div>
             <div style="font-weight:600; font-size:13px;">${em ? escapeHtml(em.name) : '—'}</div>
-            <div style="font-size:12px; color:var(--text-muted);">${fmtDate(e.date)}${e.returnDate ? ' → reprise le ' + fmtDate(e.returnDate) : ''}</div>
+            <div style="font-size:12px; color:var(--text-muted);">${e.dates && e.dates.length ? e.dates.map(fmtDate).join(', ') : fmtDate(e.date) + (e.returnDate ? ' → reprise le ' + fmtDate(e.returnDate) : '')}</div>
           </div>
           <div style="display:flex; align-items:center; gap:8px;">
             <span class="mono" style="font-size:13px;">${e.days} j</span>
@@ -2011,6 +2012,7 @@
         const slots = normalizeDaySlots(day);
         if(!slots || !slots.length) return;
         const iso = isoOf(d);
+        if(isFrenchHoliday(iso)) return; // jour férié : non travaillé
         if(planningFor(emp.id, iso)) return; // ne jamais écraser un créneau déjà saisi manuellement
         entries.push({
           id: uid(), employeeId: emp.id, date: iso,
@@ -2035,6 +2037,7 @@
 
   // Dates (lundi-vendredi, hors jours fériés) couvertes par une demande de CP
   function cpDatesOf(e){
+    if(e.dates && e.dates.length) return e.dates.filter(iso => { const dw = new Date(iso + 'T00:00:00').getDay(); return dw >= 1 && dw <= 5 && !isFrenchHoliday(iso); });
     const start = new Date(e.date + 'T00:00:00');
     let end;
     if(e.returnDate) end = new Date(e.returnDate + 'T00:00:00'); // reprise exclue
@@ -2384,7 +2387,7 @@
     const emp = employees.find(e => e.id === employeeId);
     const existing = planningFor(employeeId, dateIso);
     const existingSlots = normalizePlanSlots(existing);
-    const fallbackSlots = !existing ? normalizeDaySlots(defaultScheduleFor(employeeId, dateIso)) : null;
+    const fallbackSlots = (!existing && !isFrenchHoliday(dateIso)) ? normalizeDaySlots(defaultScheduleFor(employeeId, dateIso)) : null;
     const slots = existingSlots || fallbackSlots || null;
     const d = new Date(dateIso + 'T00:00:00');
     $('planEditorTitle').textContent =
@@ -3379,37 +3382,77 @@
     if(ok) showToast(status === 'pending' ? 'Votre saisie a bien été enregistrée, en attente de validation.' : 'Ajustement enregistré.');
   }
 
+  let cpPickedDates = [];
+
+  // Décompte en jours ouvrables à partir des jours choisis : chaque jour compte 1
+  // (dimanches et jours fériés exclus) ; un vendredi pris entraîne aussi le samedi
+  // suivant (sauf s'il est déjà choisi ou férié).
+  function countCPFromDates(dates){
+    const set = new Set(dates.filter(iso => new Date(iso + 'T00:00:00').getDay() !== 0 && !isFrenchHoliday(iso)));
+    let count = set.size;
+    set.forEach(iso => {
+      const d = new Date(iso + 'T00:00:00');
+      if(d.getDay() === 5){
+        const sat = isoOf(addDays(d, 1));
+        if(!set.has(sat) && !isFrenchHoliday(sat)) count++;
+      }
+    });
+    return count;
+  }
+
+  function renderCPDates(){
+    const box = $('cpDatesList');
+    if(!box) return;
+    cpPickedDates.sort();
+    box.innerHTML = cpPickedDates.map(iso => `
+      <span class="badge-cabinet" style="display:inline-flex; align-items:center; gap:6px;">
+        ${new Date(iso + 'T00:00:00').toLocaleDateString('fr-FR', {weekday:'short', day:'2-digit', month:'2-digit'})}
+        <button type="button" data-cp-remove="${iso}" style="border:none; background:none; cursor:pointer; font-size:14px; line-height:1;" aria-label="Retirer">×</button>
+      </span>`).join('');
+    box.querySelectorAll('[data-cp-remove]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        cpPickedDates = cpPickedDates.filter(x => x !== btn.dataset.cpRemove);
+        renderCPDates();
+      });
+    });
+    updateCPComputedDays();
+  }
+
+  function addCPDate(){
+    const iso = $('cpDate').value;
+    if(!iso) return;
+    if(new Date(iso + 'T00:00:00').getDay() === 0){ alert('Le dimanche ne compte pas comme jour de CP.'); return; }
+    if(isFrenchHoliday(iso)){ alert('Ce jour est férié : il ne compte pas comme jour de CP.'); return; }
+    if(!cpPickedDates.includes(iso)) cpPickedDates.push(iso);
+    $('cpDate').value = '';
+    renderCPDates();
+  }
+
   function updateCPComputedDays(){
-    const start = $('cpDate').value;
-    const ret = $('cpReturnDate').value;
     const hint = $('cpComputedDays');
-    if(!hint) return;
-    if(!start || !ret){
-      hint.textContent = 'Renseignez la date de début et la date de reprise pour calculer automatiquement le nombre de jours de CP (jours ouvrables, du lundi au samedi, jours fériés déduits).';
+    if(!hint) return null;
+    if(!cpPickedDates.length){
+      hint.textContent = 'Choisissez chaque jour de CP, un par un (« + Ajouter ce jour »). Le décompte est fait automatiquement en jours ouvrables : un vendredi compte 2 jours (vendredi + samedi).';
       return null;
     }
-    const days = countJoursOuvrablesCP(start, ret);
-    if(days === null){
-      hint.textContent = 'La date de reprise doit être après la date de début.';
-      return null;
-    }
-    hint.textContent = `Décompte automatique : ${days} jour${days > 1 ? 's' : ''} ouvrable${days > 1 ? 's' : ''} de CP (du lundi au samedi, jours fériés déduits).`;
+    const days = countCPFromDates(cpPickedDates);
+    hint.textContent = `Décompte automatique : ${days} jour${days > 1 ? 's' : ''} ouvrable${days > 1 ? 's' : ''} de CP (${cpPickedDates.length} jour${cpPickedDates.length > 1 ? 's' : ''} choisi${cpPickedDates.length > 1 ? 's' : ''}).`;
     return days;
   }
 
   async function addCPPris(){
     const employeeId = $('cpEmployee').value;
-    const date = $('cpDate').value || todayISO();
-    const returnDate = $('cpReturnDate').value;
     if(!employeeId){ alert('Ajoutez d\'abord une assistante dans l\'onglet Équipe.'); return; }
-    if(!returnDate){ alert('Merci de renseigner la date de reprise.'); return; }
-    const days = countJoursOuvrablesCP(date, returnDate);
-    if(days === null || days <= 0){ alert('La date de reprise doit être après la date de début.'); return; }
+    if($('cpDate').value) addCPDate(); // un jour saisi mais pas encore ajouté
+    if(!cpPickedDates.length){ alert('Merci d\'ajouter au moins un jour de CP.'); return; }
+    const dates = [...cpPickedDates].sort();
+    const days = countCPFromDates(dates);
+    if(days <= 0){ alert('Aucun jour décompté pour ces dates.'); return; }
     const status = editUnlocked ? 'approved' : 'pending';
-    entries.push({ id: uid(), employeeId, date, returnDate, type: 'cp_pris', days, status });
+    entries.push({ id: uid(), employeeId, date: dates[0], dates, type: 'cp_pris', days, status });
     const ok = await saveEntries();
-    $('cpReturnDate').value = '';
-    updateCPComputedDays();
+    cpPickedDates = [];
+    renderCPDates();
     renderAll();
     if(ok) showToast(status === 'pending' ? 'Votre demande de CP a bien été enregistrée, en attente de validation.' : 'CP enregistrés.');
   }
@@ -3491,7 +3534,6 @@
   // ---------- Init ----------
   async function init(){
     $('todayLabel').textContent = new Date().toLocaleDateString('fr-FR', {weekday:'long', day:'2-digit', month:'long', year:'numeric'});
-    $('cpDate').value = todayISO();
     $('corDate').value = todayISO();
     $('savDateEnvoi').value = todayISO();
     $('absDateDebut').value = todayISO();
@@ -3512,8 +3554,8 @@
     $('empCancelEdit').addEventListener('click', cancelEditEmployee);
     $('ajSubmit').addEventListener('click', addAjustement);
     $('cpSubmit').addEventListener('click', addCPPris);
-    $('cpDate').addEventListener('change', updateCPComputedDays);
-    $('cpReturnDate').addEventListener('change', updateCPComputedDays);
+    $('cpAddDate').addEventListener('click', addCPDate);
+    renderCPDates();
     $('acqSubmit').addEventListener('click', addAcquisition);
     $('corSubmit').addEventListener('click', addCorrection);
     $('acqEmployee').addEventListener('change', renderConges);
