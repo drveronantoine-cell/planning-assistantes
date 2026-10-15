@@ -134,6 +134,7 @@
   .segmented button.active[data-value="suggestion"]{background:var(--accent-tint); color:#8A5E1F;}
   .segmented button.active[data-view]{background:var(--primary-dark); color:white;}
   .segmented button.active[data-period]{background:var(--primary-dark); color:white;}
+  .segmented button.active[data-value="days"], .segmented button.active[data-value="period"]{background:var(--primary-dark); color:white;}
   .segmented button + button{border-left:1px solid var(--border);}
 
   .section-title{display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;}
@@ -595,15 +596,19 @@
             <label>Assistante</label>
             <select id="cpEmployee" class="emp-select"></select>
           </div>
-          <div class="field">
-            <label>Jour de CP à ajouter</label>
-            <input type="date" id="cpDate">
-          </div>
-          <div class="field" style="flex:none; align-self:flex-end;">
-            <button type="button" class="btn ghost" id="cpAddDate">+ Ajouter ce jour</button>
+        </div>
+        <div id="cpModePeriod">
+          <div class="form-row">
+            <div class="field">
+              <label>Premier jour de CP</label>
+              <input type="date" id="cpPeriodStart">
+            </div>
+            <div class="field">
+              <label>Date de reprise</label>
+              <input type="date" id="cpPeriodReturn">
+            </div>
           </div>
         </div>
-        <div id="cpDatesList" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
         <p class="hint" id="cpComputedDays" style="margin-top:0;"></p>
         <div>
           <button class="btn primary" id="cpSubmit">Enregistrer la prise de CP</button>
@@ -3447,6 +3452,25 @@
   }
 
   let cpPickedDates = [];
+  let cpMode = 'period'; // seul le mode période est proposé
+
+  // Jours de CP selon le mode : liste choisie un par un, ou période développée jour par jour
+  function currentCPDates(){
+    if(cpMode === 'days') return [...cpPickedDates].sort();
+    const start = $('cpPeriodStart').value, ret = $('cpPeriodReturn').value;
+    if(!start || !ret || ret <= start) return [];
+    const out = [];
+    for(let d = new Date(start + 'T00:00:00'); isoOf(d) < ret; d = addDays(d, 1)) out.push(isoOf(d));
+    return out;
+  }
+
+  function setCPMode(mode){
+    cpMode = mode;
+    document.querySelectorAll('#cpMode button').forEach(b => b.classList.toggle('active', b.dataset.value === mode));
+    $('cpModeDays').style.display = mode === 'days' ? '' : 'none';
+    $('cpModePeriod').style.display = mode === 'period' ? '' : 'none';
+    updateCPComputedDays();
+  }
 
   // Décompte en jours ouvrables à partir des jours choisis : chaque jour compte 1
   // (dimanches et jours fériés exclus) ; un vendredi pris entraîne aussi le samedi
@@ -3495,28 +3519,36 @@
   function updateCPComputedDays(){
     const hint = $('cpComputedDays');
     if(!hint) return null;
-    if(!cpPickedDates.length){
-      hint.textContent = 'Choisissez chaque jour de CP, un par un (« + Ajouter ce jour »). Le décompte est fait automatiquement en jours ouvrables : un vendredi compte 2 jours (vendredi + samedi).';
+    const dates = currentCPDates();
+    if(!dates.length){
+      hint.textContent = cpMode === 'days'
+        ? 'Choisissez chaque jour de CP, un par un (« + Ajouter ce jour »). Décompte automatique en jours ouvrables : un vendredi compte 2 jours (vendredi + samedi).'
+        : 'Indiquez le premier jour de CP et la date de reprise (après le premier jour). Décompte automatique en jours ouvrables, dimanches et jours fériés exclus.';
       return null;
     }
-    const days = countCPFromDates(cpPickedDates);
-    hint.textContent = `Décompte automatique : ${days} jour${days > 1 ? 's' : ''} ouvrable${days > 1 ? 's' : ''} de CP (${cpPickedDates.length} jour${cpPickedDates.length > 1 ? 's' : ''} choisi${cpPickedDates.length > 1 ? 's' : ''}).`;
+    const days = countCPFromDates(dates);
+    hint.textContent = `Décompte automatique : ${days} jour${days > 1 ? 's' : ''} ouvrable${days > 1 ? 's' : ''} de CP.`;
     return days;
   }
 
   async function addCPPris(){
     const employeeId = $('cpEmployee').value;
     if(!employeeId){ alert('Ajoutez d\'abord une assistante dans l\'onglet Équipe.'); return; }
-    if($('cpDate').value) addCPDate(); // un jour saisi mais pas encore ajouté
-    if(!cpPickedDates.length){ alert('Merci d\'ajouter au moins un jour de CP.'); return; }
-    const dates = [...cpPickedDates].sort();
+    if(cpMode === 'days' && $('cpDate').value) addCPDate(); // un jour saisi mais pas encore ajouté
+    const dates = currentCPDates();
+    if(!dates.length){
+      alert(cpMode === 'days' ? 'Merci d\'ajouter au moins un jour de CP.' : 'Merci de renseigner le premier jour et la date de reprise (après le premier jour).');
+      return;
+    }
     const days = countCPFromDates(dates);
     if(days <= 0){ alert('Aucun jour décompté pour ces dates.'); return; }
     const status = editUnlocked ? 'approved' : 'pending';
     entries.push({ id: uid(), employeeId, date: dates[0], dates, type: 'cp_pris', days, status });
     const ok = await saveEntries();
     cpPickedDates = [];
-    renderCPDates();
+    $('cpPeriodStart').value = '';
+    $('cpPeriodReturn').value = '';
+    updateCPComputedDays();
     renderAll();
     if(ok) showToast(status === 'pending' ? 'Votre demande de CP a bien été enregistrée, en attente de validation.' : 'CP enregistrés.');
   }
@@ -3635,8 +3667,9 @@
     $('empCancelEdit').addEventListener('click', cancelEditEmployee);
     $('ajSubmit').addEventListener('click', addAjustement);
     $('cpSubmit').addEventListener('click', addCPPris);
-    $('cpAddDate').addEventListener('click', addCPDate);
-    renderCPDates();
+    $('cpPeriodStart').addEventListener('change', updateCPComputedDays);
+    $('cpPeriodReturn').addEventListener('change', updateCPComputedDays);
+    updateCPComputedDays();
     $('acqSubmit').addEventListener('click', addAcquisition);
     $('corSubmit').addEventListener('click', addCorrection);
     $('acqEmployee').addEventListener('change', renderConges);
