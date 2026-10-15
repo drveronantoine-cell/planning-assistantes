@@ -1233,6 +1233,7 @@
   // connaît la clé jsonbin.io, jamais exposée dans ce fichier ni au
   // navigateur. Tous les postes qui ouvrent ce lien voient les mêmes données.
   let storageOffline = false;
+  let loadFailed = false; // true si le dernier chargement a échoué : on n'écrase alors JAMAIS les données du serveur
   const configured = () => API_BASE && !API_BASE.startsWith('COLLEZ_ICI');
 
   async function loadAll(){
@@ -1258,7 +1259,9 @@
       absences = data.absences || [];
       problemes = data.problemes || [];
       storageOffline = false;
+      loadFailed = false;
     }catch(err){
+      loadFailed = true;
       console.error('Impossible de charger les données depuis le serveur :', err);
       employees = []; entries = []; practitioners = []; caseTypes = []; cases = [];
       savRequests = []; commandes = []; courses = []; absences = []; problemes = [];
@@ -1267,8 +1270,39 @@
     updateStorageBadge();
   }
 
+  // Recharge les données du serveur (autre poste, validation faite ailleurs...) sans
+  // jamais vider l'écran si le serveur ne répond pas.
+  let lastRefresh = 0;
+  async function refreshFromServer(){
+    if(!configured() || loadFailed) return;
+    if(Date.now() - lastRefresh < 15000) return;
+    lastRefresh = Date.now();
+    try{
+      const res = await fetch(API_BASE, { cache: 'no-store' });
+      if(!res.ok) return;
+      const data = await res.json();
+      employees = data.employees || employees;
+      entries = data.entries || entries;
+      practitioners = data.practitioners || practitioners;
+      caseTypes = data.caseTypes || caseTypes;
+      cases = data.cases || cases;
+      savRequests = data.savRequests || savRequests;
+      commandes = data.commandes || commandes;
+      courses = data.courses || courses;
+      absences = data.absences || absences;
+      problemes = data.problemes || problemes;
+      renderAll();
+    }catch(err){ /* on garde l'affichage actuel */ }
+  }
+
   async function persist(){
     if(!configured()){ storageOffline = true; updateStorageBadge(); return false; }
+    if(loadFailed){
+      // Les données n'ont pas pu être chargées : enregistrer maintenant effacerait tout.
+      storageOffline = true; updateStorageBadge();
+      showToast('Enregistrement bloqué : les données n\'ont pas pu être chargées. Rechargez la page.', true);
+      return false;
+    }
     try{
       const res = await fetch(API_BASE, {
         method: 'POST',
@@ -1371,6 +1405,20 @@
     return acquis - pris + corrections;
   }
 
+  // Part d'une demande de CP dont les jours sont déjà passés (aujourd'hui inclus)
+  function cpDaysUntil(e, today){
+    if(e.dates && e.dates.length){
+      const past = e.dates.filter(iso => iso <= today);
+      return past.length === e.dates.length ? e.days : countCPFromDates(past);
+    }
+    if(e.returnDate){
+      const tomorrow = isoOf(addDays(new Date(today + 'T00:00:00'), 1));
+      const end = e.returnDate < tomorrow ? e.returnDate : tomorrow;
+      return end >= e.returnDate ? e.days : (countJoursOuvrablesCP(e.date, end) || 0);
+    }
+    return e.days;
+  }
+
   function cpBalanceToday(empId){
     // Solde à ce jour : ne déduit que les CP déjà pris (date passée ou aujourd'hui),
     // ignore les CP posés pour une date future qui n'a pas encore eu lieu.
@@ -1378,7 +1426,7 @@
     const acquis = entries.filter(e => e.employeeId === empId && e.type === 'cp_acquis' && e.date <= today)
       .reduce((s,e) => s + e.days, 0);
     const pris = entries.filter(e => e.employeeId === empId && e.type === 'cp_pris' && e.status !== 'pending' && e.date <= today)
-      .reduce((s,e) => s + e.days, 0);
+      .reduce((s,e) => s + cpDaysUntil(e, today), 0);
     const corrections = entries.filter(e => e.employeeId === empId && e.type === 'cp_correction' && e.date <= today)
       .reduce((s,e) => s + e.days, 0);
     return acquis - pris + corrections;
@@ -3545,6 +3593,8 @@
     renderAll();
 
     $('lockToggle').addEventListener('click', toggleLock);
+    document.addEventListener('visibilitychange', () => { if(!document.hidden) refreshFromServer(); });
+    window.addEventListener('focus', refreshFromServer);
 
     $('tabs').addEventListener('click', (e) => {
       const btn = e.target.closest('.tab');
