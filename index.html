@@ -1258,6 +1258,7 @@
       courses = data.courses || [];
       absences = data.absences || [];
       problemes = data.problemes || [];
+      normalizeCPEntries();
       storageOffline = false;
       loadFailed = false;
     }catch(err){
@@ -1291,8 +1292,16 @@
       courses = data.courses || courses;
       absences = data.absences || absences;
       problemes = data.problemes || problemes;
+      normalizeCPEntries();
       renderAll();
     }catch(err){ /* on garde l'affichage actuel */ }
+  }
+
+  // Recalcule le nombre de jours des CP saisis jour par jour (règle : vendredi = 2 jours)
+  function normalizeCPEntries(){
+    entries.forEach(e => {
+      if(e.type === 'cp_pris' && e.dates && e.dates.length) e.days = countCPFromDates(e.dates);
+    });
   }
 
   async function persist(){
@@ -1570,7 +1579,11 @@
             <span class="balance-label">Congés payés — solde à ce jour</span>
             <div class="balance-value mono" style="color:var(--text);">${cbToday.toFixed(1)} j</div>
             <div class="cp-dots">${dots}</div>
-            ${hasFuture ? `<div class="hint" style="margin-top:2px;">Après les CP déjà posés à venir : <strong>${cbProjected.toFixed(1)} j</strong></div>` : ''}
+          </div>
+          <div class="balance-row">
+            <span class="balance-label">Après les CP déjà posés à venir</span>
+            <div class="balance-value mono" style="color:${hasFuture ? 'var(--accent)' : 'var(--text)'};">${cbProjected.toFixed(1)} j</div>
+            ${hasFuture ? `<div class="hint" style="margin-top:2px;">${(cbToday - cbProjected).toFixed(1)} j de CP posés pour les prochains jours</div>` : ''}
           </div>
         </div>`;
     }).join('');
@@ -2181,7 +2194,7 @@
           <td>${emp ? escapeHtml(emp.name) : '—'}</td>
           <td><span class="tag ${tagClass}">${labels[e.type] || e.type}</span></td>
           <td class="mono">${detail}</td>
-          <td><button class="edit-only btn small danger-ghost" data-hist-delete="${e.id}">Suppr.</button></td>
+          <td>${e.type === 'cp_pris' ? `<button class="edit-only btn small ghost" data-hist-edit="${e.id}">Modifier les jours</button> ` : ''}<button class="edit-only btn small danger-ghost" data-hist-delete="${e.id}">Suppr.</button></td>
         </tr>`;
     }).join('');
 
@@ -2191,6 +2204,9 @@
         <tbody>${rows}</tbody>
       </table>`;
 
+    $('histTable').querySelectorAll('[data-hist-edit]').forEach(btn => {
+      btn.addEventListener('click', () => editCPDays(btn.dataset.histEdit));
+    });
     $('histTable').querySelectorAll('[data-hist-delete]').forEach(btn => {
       btn.addEventListener('click', () => deleteEntry(btn.dataset.histDelete));
     });
@@ -3534,6 +3550,21 @@
     entries = entries.filter(e => e.id !== id);
     await saveEntries();
     renderAll();
+  }
+
+  async function editCPDays(id){
+    if(!editUnlocked) return;
+    const e = entries.find(x => x.id === id && x.type === 'cp_pris');
+    if(!e) return;
+    const answer = prompt('Nombre de jours de CP décomptés pour cette période (ex : 2 pour un vendredi + samedi) :', e.days);
+    if(answer === null) return;
+    const days = parseFloat(String(answer).replace(',', '.'));
+    if(isNaN(days) || days <= 0){ alert('Nombre de jours invalide.'); return; }
+    e.days = days;
+    delete e.dates; // saisie corrigée à la main : on ne recalcule plus automatiquement
+    const ok = await saveEntries();
+    renderAll();
+    if(ok) showToast('Nombre de jours corrigé.');
   }
 
   async function approveAjustement(id){
